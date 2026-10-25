@@ -99,8 +99,10 @@ class Lobby {
       t: 's', n: this.match.round, k: st.tick, ph: st.phase,
       T: st.tanks.map(t => [t.id, r1(t.x), r1(t.y), Math.round(t.a * 1e4) / 1e4, t.alive ? 1 : 0,
         t.weapon ? t.weapon.type : 0, t.charge, t.shield, t.weapon ? t.weapon.spin : 0]),
-      P: st.projectiles.map(p => [p.id, p.type, r1(p.x), r1(p.y), p.owner, r1(p.vx), r1(p.vy),
-        p.path ? p.path.map(q => [r1(q[0]), r1(q[1])]) : p.target == null ? null : p.target]),
+      P: st.projectiles.map(p => [p.id, p.type, r1(p.x), r1(p.y), p.owner,
+        p.type === 'laser' ? p.path.map(q => [r1(q[0]), r1(q[1])])
+          : p.type === 'missile' ? [r1(p.vx), r1(p.vy), p.target == null ? null : p.target] : 0]),
+      F: st.fx.map(f => [f.id, r1(f.x), r1(f.y), f.big ? 1 : 0]),
       M: st.mines.map(m => [m.id, r1(m.x), r1(m.y), m.owner, m.age]),
       C: st.crates.map(c => [c.id, c.type, c.x, c.y]),
       B: st.beams.map(b => [b.id, r1(b.x1), r1(b.y1), r1(b.x2), r1(b.y2), b.owner, b.age])

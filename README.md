@@ -19,8 +19,9 @@ Local keys can be remapped with the keyboard button under each tank. Esc pauses 
 
 ## Rules
 
-- A new random maze every round, with loops and an irregular outline. Its size varies.
-- Normal bullets bounce, last 10 seconds, at most 5 per tank on screen, and kill any tank, including the one that fired.
+- A new random maze every round, with loops and an irregular outline. Its size varies a lot: for two players from 6×4 up to 15×9 cells, and bigger with more players.
+- Normal bullets bounce, last 20 seconds, at most 5 per tank on screen, and kill any tank, including the one that fired. A bullet that times out leaves a puff of smoke.
+- Three bullet sizes: normal shots, smaller round minigun shots, and tiny irregular pellets (shotgun, mines, frag shrapnel).
 - When one tank is left, the round ends after 3 seconds. If that tank dies in those 3 seconds, the round is a draw.
 - Crates appear in random cells. Drive over one to collect it. While you hold a weapon, you drive over other crates without taking them; a shield is picked up any time.
 - The stats bar shows each player's wins and kills for the session (local) or lobby (online). Killing yourself doesn't count as a kill.
@@ -32,15 +33,15 @@ The list matches TankTrouble.com's crates plus the death ray and frag bomb from 
 
 | Crate | What it does |
 |---|---|
-| Gatling gun | Hold fire: spins up for 1 s, then fires a stream of 25 small bullets. |
+| Gatling gun | Hold fire: spins up for 1 s, then fires a stream of 25 round minigun bullets that last 5 s. |
 | Laser | Shows a dotted aiming line. One very fast beam that bounces and passes through every tank in its path. |
-| Homing missile | Bounces like a bullet for 2.5 s, then hunts the nearest tank (possibly you) through the maze. |
+| Homing missile | Flies and bounces for 5 s while it calibrates, then hunts the closest tank (possibly you) through the maze, trailing smoke in that tank's colour. Lasts 30 s. |
 | Death ray | 2 s charge with the tank frozen, then a beam that goes through walls and stops at white space. |
 | Frag bomb | A big, slow shot. Fire again (or hit a tank, or wait 10 s) to burst it into 24 shards that stop at walls. |
-| Double barrel | Two parallel bullets per shot, 5 shots. |
+| Double barrel | Two thick barrels: two parallel bullets per shot, 5 shots. |
 | Shotgun | 14 short-range pellets in a spread, 3 shots. |
-| Mines | 3 mines. Each arms after 2 s, fades almost out of sight, and bursts into shrapnel when a tank drives over it. |
-| Shield | 6 s. Bounces incoming shots; shots fired from inside the shield can still hit you. |
+| Mines | 3 mines. Each arms after 2 s, fades almost out of sight, and bursts into 200 tiny pellets when a tank drives over it. |
+| Shield | A blue force field for 6 s. Bounces incoming shots; shots fired from inside it can still hit you. |
 
 ## Deploy to Render (free tier)
 

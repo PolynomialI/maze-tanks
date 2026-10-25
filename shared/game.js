@@ -13,17 +13,17 @@
     CELL: 100, WALL: 4,                          // wall half-thickness
     TANK_L: 40, TANK_W: 32, MUZZLE: 30,
     TANK_SPEED: 150, TANK_BACK: 105, TANK_TURN: 3.6,
-    BULLET_R: 4, BULLET_SPEED: 210, BULLET_LIFE: 10 * TICK, MAX_BULLETS: 5,
+    BULLET_R: 4, BULLET_SPEED: 210, BULLET_LIFE: 20 * TICK, MAX_BULLETS: 5,
     END_DELAY: 3 * TICK,
     CRATE_R: 13, CRATE_MAX: 3, CRATE_MIN_T: 3 * TICK, CRATE_MAX_T: 8 * TICK,
-    GAT_AMMO: 25, GAT_SPIN: TICK, GAT_EVERY: 4, GAT_SPEED: 240, GAT_R: 2, GAT_LIFE: 5 * TICK, GAT_SPREAD: 0.12,
+    GAT_AMMO: 25, GAT_SPIN: TICK, GAT_EVERY: 4, GAT_SPEED: 240, GAT_R: 3, GAT_LIFE: 5 * TICK, GAT_SPREAD: 0.12,
     LASER_SPEED: 1500, LASER_LIFE: 48, LASER_R: 1.5, AIM_LEN: 600,
-    MISSILE_SPEED: 180, MISSILE_R: 5, MISSILE_LIFE: 12 * TICK, MISSILE_SEEK: 150, MISSILE_TURN: 3.5,
+    MISSILE_SPEED: 180, MISSILE_R: 5, MISSILE_LIFE: 30 * TICK, MISSILE_SEEK: 5 * TICK, MISSILE_TURN: 3.5,
     RAY_CHARGE: 2 * TICK, RAY_LIFE: 36, RAY_KILL: 12, RAY_W: 6,
     FRAG_SPEED: 170, FRAG_R: 6, FRAG_FUSE: 10 * TICK, FRAG_SHARDS: 24, SHARD_SPEED: 320, SHARD_LIFE: 27, SHARD_R: 2,
-    DOUBLE_AMMO: 5, DOUBLE_GAP: 7,
+    DOUBLE_AMMO: 5, DOUBLE_GAP: 6,
     SHOT_AMMO: 3, SHOT_PELLETS: 14, SHOT_SPREAD: 0.4, SHOT_LIFE: 150, PELLET_R: 2,
-    MINE_AMMO: 3, MINE_ARM: 2 * TICK, MINE_R: 9, MINE_SHARDS: 16, MINE_SHARD_SPEED: 260, MINE_SHARD_LIFE: 21,
+    MINE_AMMO: 3, MINE_ARM: 2 * TICK, MINE_R: 9, MINE_PELLETS: 200,
     SHIELD_TIME: 6 * TICK, SHIELD_R: 36,
     STEP: 5                                      // longest projectile sub-step
   };
@@ -32,6 +32,7 @@
   const COLORS = ['#e2493b', '#f08c24', '#f2c230', '#8cc63f', '#2e9e4f', '#26a69a', '#3d8fe0', '#2f55b8', '#8e5cc7', '#e46aa7', '#8a6a52', '#4f5359'];
   const LOOK = { colors: COLORS.length, barrels: 4, accessories: 5 };
   const NOINPUT = {};
+  const FIZZLE = { bullet: 1, gat: 1, missile: 1 }; // shots that leave a puff of smoke when they time out
 
   // ---------- random ----------
   function rnd(s) {
@@ -137,6 +138,33 @@
     return out;
   }
 
+  // ---------- wall lookup ----------
+  // Walls bucketed by maze cell, so collision checks only look at nearby walls.
+  let stamp = 0;
+  function wallGrid(walls) {
+    if (walls.grid) return walls.grid;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const w of walls) { x0 = Math.min(x0, w.x1); y0 = Math.min(y0, w.y1); x1 = Math.max(x1, w.x2); y1 = Math.max(y1, w.y2); }
+    const g = { gx: Math.floor(x0 / C.CELL), gy: Math.floor(y0 / C.CELL) };
+    g.nx = Math.floor(x1 / C.CELL) - g.gx + 1;
+    g.ny = Math.floor(y1 / C.CELL) - g.gy + 1;
+    g.cells = Array.from({ length: g.nx * g.ny }, () => []);
+    for (const w of walls) forCells(g, w.x1, w.y1, w.x2, w.y2, c => g.cells[c].push(w));
+    Object.defineProperty(walls, 'grid', { value: g });
+    return g;
+  }
+  function forCells(g, x1, y1, x2, y2, f) {
+    const cx1 = Math.max(0, Math.floor(x1 / C.CELL) - g.gx), cx2 = Math.min(g.nx - 1, Math.floor(x2 / C.CELL) - g.gx);
+    const cy1 = Math.max(0, Math.floor(y1 / C.CELL) - g.gy), cy2 = Math.min(g.ny - 1, Math.floor(y2 / C.CELL) - g.gy);
+    for (let y = cy1; y <= cy2; y++) for (let x = cx1; x <= cx2; x++) f(y * g.nx + x);
+  }
+  // Calls f once for each wall overlapping the box.
+  function nearWalls(walls, x1, y1, x2, y2, f) {
+    if (!walls.length) return;
+    const g = wallGrid(walls), q = ++stamp;
+    forCells(g, x1, y1, x2, y2, c => { for (const w of g.cells[c]) if (w.seen !== q) { w.seen = q; f(w); } });
+  }
+
   // ---------- geometry ----------
   function tankPoly(x, y, a) {
     const c = Math.cos(a), s = Math.sin(a), l = C.TANK_L / 2, w = C.TANK_W / 2;
@@ -178,19 +206,19 @@
   // First wall hit by a circle of radius r moving from (x,y) by (dx,dy). t is the fraction travelled.
   function castRay(walls, x, y, dx, dy, r) {
     let bt = Infinity, bnx = 0, bny = 0;
-    for (const w of walls) {
+    nearWalls(walls, Math.min(x, x + dx) - r, Math.min(y, y + dy) - r, Math.max(x, x + dx) + r, Math.max(y, y + dy) + r, w => {
       const x1 = w.x1 - r, x2 = w.x2 + r, y1 = w.y1 - r, y2 = w.y2 + r;
       let tx0 = -Infinity, tx1 = Infinity, ty0 = -Infinity, ty1 = Infinity;
       if (dx) { const a = (x1 - x) / dx, b = (x2 - x) / dx; tx0 = Math.min(a, b); tx1 = Math.max(a, b); }
-      else if (x <= x1 || x >= x2) continue;
+      else if (x <= x1 || x >= x2) return;
       if (dy) { const a = (y1 - y) / dy, b = (y2 - y) / dy; ty0 = Math.min(a, b); ty1 = Math.max(a, b); }
-      else if (y <= y1 || y >= y2) continue;
+      else if (y <= y1 || y >= y2) return;
       const t0 = Math.max(tx0, ty0), t1 = Math.min(tx1, ty1);
-      if (t1 <= t0 || t0 < 0 || t0 > 1 || t0 >= bt) continue;
+      if (t1 <= t0 || t0 < 0 || t0 > 1 || t0 >= bt) return;
       bt = t0;
       bnx = tx0 >= ty0 - 1e-9 ? -Math.sign(dx) : 0;
       bny = ty0 >= tx0 - 1e-9 ? -Math.sign(dy) : 0;
-    }
+    });
     return bt === Infinity ? null : { t: bt, nx: bnx, ny: bny };
   }
 
@@ -227,10 +255,7 @@
     for (let it = 0; it < 6; it++) {
       const poly = tankPoly(x, y, a);
       let push = null;
-      for (const w of state.walls) {
-        if (x + R < w.x1 || x - R > w.x2 || y + R < w.y1 || y - R > w.y2) continue;
-        if ((push = sat(poly, rectPoly(w)))) break;
-      }
+      nearWalls(state.walls, x - R, y - R, x + R, y + R, w => { if (!push) push = sat(poly, rectPoly(w)); });
       if (!push) for (const o of state.tanks) {
         if (o === tank || !o.alive || Math.abs(o.x - x) > 52 || Math.abs(o.y - y) > 52) continue;
         if ((push = sat(poly, tankPoly(o.x, o.y, o.a)))) break;
@@ -278,11 +303,12 @@
     return p;
   }
 
-  function burst(state, x, y, owner, n, speed, life) {
+  // n tiny pieces flying out in all directions: 'shard' stops at walls, 'pellet' bounces.
+  function burst(state, x, y, owner, n, speed, life, type = 'shard') {
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2 + rnd(state.rng) * 0.25, v = speed * (0.8 + 0.4 * rnd(state.rng));
-      state.projectiles.push({ id: state.nextId++, type: 'shard', owner, x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v,
-        r: C.SHARD_R, life, age: 0, bounces: 0 });
+      state.projectiles.push({ id: state.nextId++, type, owner, x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+        r: type === 'pellet' ? C.PELLET_R : C.SHARD_R, life: Math.round(life * (0.8 + 0.2 * rnd(state.rng))), age: 0, bounces: 0 });
     }
   }
 
@@ -451,7 +477,11 @@
       }
       if (p.path && !p.dead) p.head = [p.x, p.y];
       if (!p.dead && p.age >= p.life) {
-        if (p.type === 'frag') explodeFrag(state, p); else p.dead = true;
+        if (p.type === 'frag') explodeFrag(state, p);
+        else {
+          p.dead = true;
+          if (FIZZLE[p.type]) state.fx.push({ id: state.nextId++, x: p.x, y: p.y, tick: state.tick, big: p.type === 'missile' });
+        }
       }
     }
   }
@@ -461,7 +491,7 @@
       if (++m.age < C.MINE_ARM) continue;
       if (state.tanks.some(t => t.alive && hitsTank(t, m.x, m.y, C.MINE_R))) {
         m.dead = true;
-        burst(state, m.x, m.y, m.owner, C.MINE_SHARDS, C.MINE_SHARD_SPEED, C.MINE_SHARD_LIFE);
+        burst(state, m.x, m.y, m.owner, C.MINE_PELLETS, C.BULLET_SPEED * 1.35, C.SHOT_LIFE, 'pellet');
       }
     }
     state.mines = state.mines.filter(m => !m.dead);
@@ -511,7 +541,7 @@
   // ---------- rounds ----------
   function newRound(seed, players) {
     const s = { seed: seed | 0 }, n = players.length;
-    const w = rint(s, 4 + (n >> 1), 7 + n), h = rint(s, 3 + ((n / 3) | 0), 5 + (n >> 1));
+    const w = rint(s, 5 + (n >> 1), 13 + n), h = rint(s, 4 + ((n / 3) | 0), 8 + (n >> 1));
     const maze = makeMaze(w, h, s);
     const cells = [...Array(w * h).keys()].filter(c => !maze.off[c]);
     for (let i = cells.length - 1; i > 0; i--) { const j = rint(s, 0, i); [cells[i], cells[j]] = [cells[j], cells[i]]; }
@@ -520,7 +550,7 @@
     for (const c of cells) if (picks.length < n && far(c)) picks.push(c);
     for (const c of cells) if (picks.length < n && !picks.includes(c)) picks.push(c);
     const state = {
-      tick: 0, rng: s, maze, walls: buildWalls(maze), tanks: [], projectiles: [], mines: [], beams: [], crates: [],
+      tick: 0, rng: s, maze, walls: buildWalls(maze), tanks: [], projectiles: [], mines: [], beams: [], crates: [], fx: [],
       kills: [], phase: 'play', endTimer: 0, winner: null, crateTimer: rint(s, C.CRATE_MIN_T, C.CRATE_MAX_T), nextId: 1
     };
     players.forEach((p, i) => state.tanks.push({
@@ -544,6 +574,7 @@
     stepBeams(state);
     stepCrates(state);
     state.projectiles = state.projectiles.filter(p => !p.dead);
+    state.fx = state.fx.filter(f => state.tick - f.tick < 20); // kept briefly so snapshots carry them
     const alive = state.tanks.filter(t => t.alive);
     if (state.phase === 'play' && alive.length <= 1) { state.phase = 'ending'; state.endTimer = C.END_DELAY; }
     else if (state.phase === 'ending' && --state.endTimer <= 0) {

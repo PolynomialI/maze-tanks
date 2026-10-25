@@ -130,7 +130,7 @@
     const lookMap = {};
     for (const p of match.players) lookMap[p.id] = p.look;
     return {
-      round: match.round, tick: st.tick, maze: st.maze, walls: st.walls, mines: st.mines, crates: st.crates, beams: st.beams, looks: lookMap,
+      round: match.round, tick: st.tick, maze: st.maze, walls: st.walls, mines: st.mines, crates: st.crates, beams: st.beams, fx: st.fx, looks: lookMap,
       tanks: st.tanks.map(t => ({
         ...t, ...lerp('t' + t.id, t), look: lookMap[t.id],
         weapon: t.weapon && t.weapon.type, spin: t.weapon ? t.weapon.spin : 0
@@ -163,7 +163,7 @@
   addEventListener('keyup', e => held.delete(e.code));
   addEventListener('blur', () => held.clear());
 
-  window.mazeTanks = { get match() { return match; }, get playing() { return playing; } }; // for tests
+  window.mazeTanks = { scene, get match() { return match; }, get playing() { return playing; } }; // for tests
   menu();
   requestAnimationFrame(frame);
 })();

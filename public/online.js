@@ -157,15 +157,18 @@
       tanks.push(t);
     }
     const prevP = new Map(a.P.map(p => [p[0], { x: p[2], y: p[3] }]));
-    const projectiles = b.P.map(p => ({
-      id: p[0], type: p[1], owner: p[4], vx: p[5], vy: p[6], ...lerp(prevP.get(p[0]), { x: p[2], y: p[3] }),
-      path: p[1] === 'laser' ? p[7] : undefined, target: p[1] === 'missile' ? p[7] : null
-    }));
+    const projectiles = b.P.map(p => {
+      const o = { id: p[0], type: p[1], owner: p[4], ...lerp(prevP.get(p[0]), { x: p[2], y: p[3] }) };
+      if (p[1] === 'laser') o.path = p[5];
+      if (p[1] === 'missile') { o.vx = p[5][0]; o.vy = p[5][1]; o.target = p[5][2]; }
+      return o;
+    });
     return {
       round: roundNo, tick: b.k, maze, walls, looks, tanks, projectiles,
       mines: b.M.map(m => ({ id: m[0], x: m[1], y: m[2], owner: m[3], age: m[4] })),
       crates: b.C.map(c => ({ id: c[0], type: c[1], x: c[2], y: c[3] })),
-      beams: b.B.map(r => ({ id: r[0], x1: r[1], y1: r[2], x2: r[3], y2: r[4], owner: r[5], age: r[6] }))
+      beams: b.B.map(r => ({ id: r[0], x1: r[1], y1: r[2], x2: r[3], y2: r[4], owner: r[5], age: r[6] })),
+      fx: b.F.map(f => ({ id: f[0], x: f[1], y: f[2], big: !!f[3] }))
     };
   }
 
@@ -191,7 +194,7 @@
   addEventListener('keyup', e => held.delete(e.code));
   addEventListener('blur', () => held.clear());
 
-  window.mazeTanksOnline = { get screen() { return screen; }, get me() { return me; }, get players() { return players; }, get pred() { return pred; }, get snaps() { return snaps; } };
+  window.mazeTanksOnline = { scene, get screen() { return screen; }, get me() { return me; }, get players() { return players; }, get pred() { return pred; }, get snaps() { return snaps; } };
   show('connect');
   connect();
   requestAnimationFrame(frame);
