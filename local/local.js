@@ -17,11 +17,14 @@
   const scene = new Render.Scene($('#game')), bar = U.statsBar($('#bar')), overlay = $('#overlay');
   const held = new Set(), tapped = new Set(); // tapped: pressed since the last update, so short taps still count
   let match = null, playing = false, acc = 0, lastT = performance.now(), prev = new Map(), remap = null;
+  let ctl = null; // controls screen: { ready, sets, caps }
 
   function menu() {
     playing = false;
+    ctl = null;
     overlay.hidden = false;
     overlay.textContent = '';
+    overlay.classList.remove('dark');
     const wrap = U.el('div', 'row');
     wrap.style.gap = '28px';
     const card = i => {
@@ -38,7 +41,7 @@
     };
     const play = U.button('play', 'play', 'big dark');
     play.id = 'play';
-    play.onclick = start;
+    play.onclick = controls;
     wrap.append(card(0), play, card(1));
     overlay.append(wrap);
     play.focus();
@@ -87,6 +90,27 @@
     overlay.append(panel);
   }
 
+  // Before playing: each player's keys, and both press their fire key to say they're ready.
+  function controls() {
+    playing = false;
+    overlay.hidden = false;
+    overlay.textContent = '';
+    overlay.classList.add('dark');
+    const wrap = U.el('div', 'ctl'), logo = U.el('canvas', 'logo'), sets = U.el('div', 'sets');
+    Render.tankIcon(logo, { body: 3, turret: 1, tread: 4, barrel: 2, acc: 0 }, 120);
+    ctl = { ready: [false, false], sets: [], caps: [] };
+    [0, 1].forEach(i => {
+      const set = U.el('div', 'set'), caps = U.keycaps(keys[i]), tank = U.el('canvas', 'tank');
+      Render.tankIcon(tank, looks[i], 84);
+      set.append(caps.el, tank, U.el('span', 'tick', U.ICON.check));
+      sets.append(set);
+      ctl.sets.push(set);
+      ctl.caps.push(caps);
+    });
+    wrap.append(logo, sets);
+    overlay.append(wrap);
+  }
+
   function start() {
     if (!match) {
       match = new G.Match((Math.random() * 2147483647) | 0);
@@ -99,6 +123,7 @@
     playing = true;
     overlay.hidden = true;
     overlay.textContent = '';
+    overlay.classList.remove('dark');
   }
 
   function tick() {
@@ -140,6 +165,7 @@
   }
 
   function frame(t) {
+    requestAnimationFrame(frame); // first, so one bad frame can never stop the game
     const dt = Math.min(0.25, (t - lastT) / 1000);
     lastT = t;
     if (playing && match.state) {
@@ -150,18 +176,28 @@
     scene.draw(view(playing ? acc / G.C.DT : 1), t);
     U.countdown($('#game'), $('#count'), playing && match.state ? match.state.countdown : 0);
     bar.update(match ? match.players : looks.map((look, i) => ({ id: i + 1, look, wins: 0, kills: 0 })));
-    requestAnimationFrame(frame);
   }
 
   addEventListener('keydown', e => {
     if (remap) { e.preventDefault(); const r = remap; remap = null; if (e.code !== 'Escape') r.set(e.code); else openKeys(r.i); return; }
+    if (ctl) {
+      if (e.code === 'Escape') { menu(); return; }
+      if (keys.some(k => k.includes(e.code))) e.preventDefault();
+      ctl.caps.forEach(c => c.press(e.code, true));
+      keys.forEach((k, i) => { if (e.code === k[4]) { ctl.ready[i] = true; ctl.sets[i].classList.add('ok'); } });
+      if (ctl.ready.every(Boolean)) { ctl = null; setTimeout(start, 500); }
+      return;
+    }
     if (!playing) return;
     if (e.code === 'Escape') { menu(); return; }
     if (keys.some(k => k.includes(e.code))) e.preventDefault();
     held.add(e.code);
     tapped.add(e.code);
   });
-  addEventListener('keyup', e => held.delete(e.code));
+  addEventListener('keyup', e => {
+    held.delete(e.code);
+    if (ctl) ctl.caps.forEach(c => c.press(e.code, false));
+  });
   addEventListener('blur', () => held.clear());
 
   window.mazeTanks = { scene, get match() { return match; }, get playing() { return playing; } }; // for tests

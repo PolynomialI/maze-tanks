@@ -436,7 +436,7 @@
       for (const t of v.tanks) {
         if (!t.alive || t.weapon !== 'laser') continue;
         const path = G.tracePath(v, t.x, t.y, t.a, C.AIM_LEN);
-        ctx.strokeStyle = col(t.look.turret);
+        ctx.strokeStyle = col((t.look || lookOf(t.id)).turret);
         ctx.beginPath(); path.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
       }
       ctx.setLineDash([]);
@@ -474,7 +474,8 @@
       ctx.setTransform(k, 0, 0, k, this.ox, this.oy);
       ctx.globalAlpha = 1;
 
-      for (const t of v.tanks) if (t.alive) drawTank(ctx, t.look, t.x, t.y, t.a, t);
+      // (a player who just left can still be in the delayed view: draw their tank in neutral colours)
+      for (const t of v.tanks) if (t.alive) drawTank(ctx, t.look || lookOf(t.id), t.x, t.y, t.a, t);
 
       // projectiles: tiny splinters (minigun, shotgun, mines, shrapnel), normal bullets, frag bomb, laser and missile
       for (const p of v.projectiles) {

@@ -17,6 +17,8 @@ Two versions share one game-logic module (`shared/game.js`):
 
 Local keys can be remapped with the keyboard button under each tank. Esc pauses back to the menu. Click a tank (or the palette button) to open the garage.
 
+Before each game, a controls screen shows every player's keys. Local: each player presses their fire key to say they're ready, and the game starts when both have. Online: the controls are shown while you wait for opponents (no confirmation needed).
+
 ## Rules
 
 - A new random maze every round, always landscape, from tiny (3×2 cells) to huge (up to 24 wide), and from tight mazes to open arenas with scattered cover. Floor shading is random, with dark cells grouped together.

@@ -36,6 +36,8 @@ const shots = path.join(__dirname, 'screens');
     await a.locator('.garage .btn').click();
     await a.click('#play');
     await a.waitForFunction(() => mazeTanksOnline.screen === 'queue');
+    await a.waitForSelector('#overlay.dark .ctl'); // controls shown while waiting, no confirmation needed
+    assert.equal(await a.locator('.ctl .set').count(), 2);
     await a.screenshot({ path: path.join(shots, 'online-queue.png') });
     await b.click('#play');
     await b.waitForFunction(() => mazeTanksOnline.players.length === 2);
@@ -50,9 +52,7 @@ const shots = path.join(__dirname, 'screens');
     assert.equal(await a.locator('#count').isHidden(), true);
     const p0 = await a.evaluate(() => ({ ...mazeTanksOnline.pred }));
     await a.keyboard.down('ArrowLeft');
-    await a.waitForTimeout(40);
-    const p1 = await a.evaluate(() => ({ ...mazeTanksOnline.pred }));
-    assert.notEqual(p0.a, p1.a, 'rotated within a few frames');
+    await a.waitForFunction(a0 => mazeTanksOnline.pred.a !== a0, p0.a, { timeout: 500 }); // turns on screen right away
     await a.waitForTimeout(500);
     await a.keyboard.up('ArrowLeft');
     await a.waitForTimeout(400);
@@ -82,8 +82,9 @@ const shots = path.join(__dirname, 'screens');
     }
     await b.screenshot({ path: path.join(shots, 'online-bullets.png') });
     // a missile locked on to player 2 trails smoke in player 2's colour on both screens
-    const idb = await b.evaluate(() => mazeTanksOnline.me), tb = st.tanks.find(t => t.id === idb);
-    const far = free.reduce((f, p) => (Math.hypot(p[0] - tb.x, p[1] - tb.y) > Math.hypot(f[0] - tb.x, f[1] - tb.y) ? p : f));
+    const idb = await b.evaluate(() => mazeTanksOnline.me);
+    const room = p => Math.min(...st.tanks.map(t => Math.hypot(p[0] - t.x, p[1] - t.y)));
+    const far = free.reduce((f, p) => (room(p) > room(f) ? p : f)); // as far from every tank as possible
     st.projectiles.push({ id: 5100, type: 'missile', owner: ida, x: far[0], y: far[1], vx: 0, vy: 0, r: 5, life: 1e6,
       age: G.C.MISSILE_SEEK, bounces: 0, target: idb, rival: 0 });
     for (const page of [a, b]) {
@@ -105,16 +106,25 @@ const shots = path.join(__dirname, 'screens');
   await step('a third player joins mid-round and watches (eye icon)', async () => {
     await c.click('#play');
     await c.waitForFunction(() => mazeTanksOnline.screen === 'game' && mazeTanksOnline.players.length === 3);
+    await c.waitForSelector('.ctl'); // matched straight away: the controls stay up briefly, then the game shows
+    await c.waitForFunction(() => document.querySelector('#overlay').hidden, null, { timeout: 4000 });
     await c.waitForSelector('#corner span:not([hidden]) svg');
     assert.equal(await c.locator('#bar .pl').count(), 3);
     await c.waitForTimeout(300);
     await c.screenshot({ path: path.join(shots, 'online-spectate.png') });
   });
 
-  await step('leave button returns home', async () => {
+  await step('a player with a tank leaves mid-round: they go home, the others keep playing smoothly', async () => {
+    const idc = await c.evaluate(() => mazeTanksOnline.me);
+    [...app.mm.lobbies][0].match.startRound(); // next round: the third player now has a tank
+    await a.waitForFunction(idc => mazeTanksOnline.snaps.length && mazeTanksOnline.snaps.at(-1).T.some(t => t[0] === idc), idc);
     await c.locator('#corner .btn').click();
     await c.waitForFunction(() => mazeTanksOnline.screen === 'home');
     await a.waitForFunction(() => mazeTanksOnline.players.length === 2);
+    // the departed tank is still in the delayed view for a moment; drawing must carry on
+    const before = await a.evaluate(() => mazeTanksOnline.scene.last);
+    await a.waitForTimeout(400);
+    assert.ok(await a.evaluate(() => mazeTanksOnline.scene.last) > before, 'still drawing frames');
   });
 
   await step('server goes away: waking spinner, then reconnects by itself', async () => {

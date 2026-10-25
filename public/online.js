@@ -6,6 +6,8 @@
   // Both classic layouts work: arrows + M, or E/S/D/F + Q. Space also fires.
   const BIND = { up: ['ArrowUp', 'KeyE'], down: ['ArrowDown', 'KeyD'], left: ['ArrowLeft', 'KeyS'], right: ['ArrowRight', 'KeyF'], fire: ['KeyM', 'KeyQ', 'Space'] };
   const ALLKEYS = new Set(Object.values(BIND).flat());
+  const KEYSETS = [['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'], ['KeyE', 'KeyD', 'KeyS', 'KeyF', 'KeyQ']];
+  const KEYS_MIN = 2500; // the controls stay up at least this long after pressing play
   const INTERP = 8; // others are drawn 8 updates (133 ms) behind the newest snapshot, smoothing out network jitter
 
   let look = null;
@@ -18,7 +20,7 @@
   corner.append(wait, eye, leave);
   leave.onclick = () => send({ t: 'x' });
 
-  let ws = null, me = null, screen = 'connect', retry = 0;
+  let ws = null, me = null, screen = 'connect', retry = 0, keysAt = -Infinity, keyCaps = [];
   let players = [], waiting = false, maze = null, walls = null, roundNo = 0;
   let snaps = [], renderK = 0, world = null;
   let seq = 0, pending = [], pred = null, predPrev = null, cdLeft = 0;
@@ -33,10 +35,22 @@
     snaps = []; world = null; pending = []; pred = predPrev = null;
   }
 
+  // The controls (both key sets), shown after pressing play; no confirmation needed online.
+  function keysPanel() {
+    const wrap = U.el('div', 'ctl'), logo = U.el('canvas', 'logo'), sets = U.el('div', 'sets');
+    Render.tankIcon(logo, look, 120);
+    keyCaps = KEYSETS.map(codes => U.keycaps(codes));
+    for (const c of keyCaps) { const set = U.el('div', 'set'); set.append(c.el); sets.append(set); }
+    wrap.append(logo, sets);
+    return wrap;
+  }
+
   function show(name) {
     screen = name;
     overlay.textContent = '';
     overlay.hidden = false;
+    overlay.classList.remove('dark');
+    keyCaps = [];
     corner.hidden = true;
     if (name === 'connect') overlay.append(U.el('div', 'spin'));
     if (name === 'home') {
@@ -50,19 +64,29 @@
       card.append(cv, paint);
       const play = U.button('play', 'play', 'big dark');
       play.id = 'play';
-      play.onclick = () => send({ t: 'q', look });
+      play.onclick = () => { keysAt = performance.now(); send({ t: 'q', look }); };
       wrap.append(card, play);
       overlay.append(wrap);
       play.focus();
     }
     if (name === 'queue') {
+      overlay.classList.add('dark');
       const col = U.el('div', 'col');
       const cancel = U.button('close', 'cancel', 'small');
       cancel.onclick = () => send({ t: 'x' });
-      col.append(U.el('div', 'spin'), cancel);
+      col.style.gap = '24px';
+      col.append(keysPanel(), U.el('div', 'spin'), cancel);
       overlay.append(col);
     }
-    if (name === 'game') { overlay.hidden = true; corner.hidden = false; }
+    if (name === 'game') {
+      corner.hidden = false;
+      const left = KEYS_MIN - (performance.now() - keysAt);
+      if (left > 0) { // matched straight away: keep the controls up a moment longer
+        overlay.classList.add('dark');
+        overlay.append(keysPanel());
+        setTimeout(() => { if (screen === 'game') { overlay.hidden = true; overlay.textContent = ''; keyCaps = []; } }, left);
+      } else overlay.hidden = true;
+    }
     updateCorner();
   }
 
@@ -181,6 +205,7 @@
   }
 
   function frame(t) {
+    requestAnimationFrame(frame); // first, so one bad frame can never stop the game
     const dt = Math.min(0.25, (t - lastT) / 1000);
     lastT = t;
     if (screen === 'game') {
@@ -193,16 +218,19 @@
     scene.draw(screen === 'game' ? view(acc / C.DT) : null, t);
     U.countdown($('#game'), $('#count'), screen === 'game' && maze ? cdLeft : 0);
     bar.update(screen === 'game' ? players : [{ id: me, look, wins: 0, kills: 0 }], me);
-    requestAnimationFrame(frame);
   }
 
   addEventListener('keydown', e => {
+    for (const c of keyCaps) c.press(e.code, true);
     if (screen !== 'game' || !ALLKEYS.has(e.code)) return;
     e.preventDefault();
     held.add(e.code);
     tapped.add(e.code);
   });
-  addEventListener('keyup', e => held.delete(e.code));
+  addEventListener('keyup', e => {
+    held.delete(e.code);
+    for (const c of keyCaps) c.press(e.code, false);
+  });
   addEventListener('blur', () => held.clear());
 
   window.mazeTanksOnline = { scene, get cd() { return cdLeft; }, get screen() { return screen; }, get me() { return me; }, get players() { return players; }, get pred() { return pred; }, get snaps() { return snaps; } };

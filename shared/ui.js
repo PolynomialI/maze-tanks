@@ -105,6 +105,29 @@
     ok.focus();
   }
 
+  // One control set as keyboard keys, laid out like a keyboard: fire on the left of the bottom row, up above down.
+  // codes: [up, down, left, right, fire]. press(code, down) shows a key going down while it is held.
+  const ARROW = {
+    ArrowUp: S('<path d="M12 4l-7 8h4.5v7h5v-7H19z" fill="currentColor"/>'),
+    ArrowDown: S('<path d="M12 20l7-8h-4.5V5h-5v7H5z" fill="currentColor"/>'),
+    ArrowLeft: S('<path d="M4 12l8-7v4.5h7v5h-7V19z" fill="currentColor"/>'),
+    ArrowRight: S('<path d="M20 12l-8 7v-4.5H5v-5h7V5z" fill="currentColor"/>')
+  };
+  const SLOTS = [[3, 1], [3, 2], [2, 2], [4, 2], [1, 2]]; // [column, row] for up, down, left, right, fire
+  function keycaps(codes) {
+    const box = el('div', 'caps'), caps = {};
+    codes.forEach((code, i) => {
+      const c = el('div', 'cap' + (i === 4 ? ' fire' : ''));
+      if (ARROW[code]) c.innerHTML = ARROW[code];
+      else c.textContent = code.replace(/^(Key|Digit|Numpad)/, '');
+      c.style.gridColumn = SLOTS[i][0];
+      c.style.gridRow = SLOTS[i][1];
+      box.append(c);
+      caps[code] = c;
+    });
+    return { el: box, press(code, down) { if (caps[code]) caps[code].classList.toggle('down', down); } };
+  }
+
   // Big 3-2-1 over a blurred view before each round.
   function countdown(canvas, el, ticks) {
     const on = ticks > 0;
@@ -113,5 +136,5 @@
     if (on) el.textContent = Math.ceil(ticks / G.C.TICK);
   }
 
-  return { ICON, el, button, statsBar, garage, countdown };
+  return { ICON, el, button, statsBar, garage, countdown, keycaps };
 });

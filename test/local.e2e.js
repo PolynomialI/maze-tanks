@@ -53,8 +53,22 @@ fs.mkdirSync(shots, { recursive: true });
     await page.locator('.keys .btn').click();
   });
 
-  await step('play starts a round with two tanks after a 3-2-1 countdown over a blurred view', async () => {
+  await step('controls screen: each player presses their fire key to confirm, then the game starts', async () => {
     await page.click('#play');
+    await page.waitForSelector('.ctl');
+    assert.equal(await page.locator('.ctl .set').count(), 2);
+    assert.deepEqual(await page.locator('.ctl .set').first().locator('.cap').allInnerTexts(), ['W', 'D', 'S', 'F', 'Q'], 'player 1 keys as remapped');
+    await page.screenshot({ path: path.join(shots, 'local-controls.png') });
+    await page.keyboard.press('KeyQ');
+    assert.deepEqual(await page.locator('.ctl .set.ok').count(), 1, 'player 1 ready');
+    await page.waitForTimeout(700);
+    assert.equal(await page.evaluate(() => mazeTanks.playing), false, 'waits for player 2');
+    await page.screenshot({ path: path.join(shots, 'local-controls-p1-ready.png') });
+    await page.keyboard.press('KeyM');
+    await page.waitForFunction(() => mazeTanks.playing, null, { timeout: 2000 });
+  });
+
+  await step('play starts a round with two tanks after a 3-2-1 countdown over a blurred view', async () => {
     assert.equal(await page.locator('#overlay').isHidden(), true);
     const t = await tanks();
     assert.equal(t.length, 2);
@@ -90,6 +104,9 @@ fs.mkdirSync(shots, { recursive: true });
     const owners = await page.evaluate(() => mazeTanks.match.state.projectiles.map(p => p.owner));
     assert.ok(owners.includes(1) && owners.includes(2));
     await page.screenshot({ path: path.join(shots, 'local-play.png') });
+    // bullets now last 20 s: clear them so a stray hit can't change the later steps
+    await page.evaluate(() => { mazeTanks.match.state.projectiles = []; });
+    assert.deepEqual((await tanks()).map(t => t.alive), [true, true]);
   });
 
   await step('power-ups, crates, shield, mines and aim line render (art check)', async () => {
@@ -128,6 +145,9 @@ fs.mkdirSync(shots, { recursive: true });
     await page.keyboard.press('Escape');
     await page.waitForSelector('#play');
     await page.click('#play');
+    await page.keyboard.press('KeyQ');
+    await page.keyboard.press('KeyM');
+    await page.waitForFunction(() => mazeTanks.playing, null, { timeout: 2000 });
     assert.equal(await page.evaluate(() => mazeTanks.match.players[0].wins), 1);
   });
 
