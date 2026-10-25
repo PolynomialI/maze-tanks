@@ -418,14 +418,16 @@ test('frag bomb: explodes on its own when the fuse runs out', () => {
   assert.ok(st.projectiles.some(p => p.type === 'shard'));
 });
 
-test('double barrel: two parallel bullets per shot, five shots', () => {
+test('double barrel: barrels fire one at a time, alternating, 14 shots', () => {
   const st = arena(10, 10, [], [tank(1, 150, 500, 0)]);
   arm(st.tanks[0], 'double');
   press(st, 1);
+  assert.equal(st.projectiles.length, 1, 'one bullet per press');
+  press(st, 1);
   const [a, b] = st.projectiles;
-  assert.ok(Math.abs(Math.abs(a.y - b.y) - 2 * C.DOUBLE_GAP) < 1e-6 && a.vx === b.vx);
-  for (let i = 1; i < C.DOUBLE_AMMO; i++) press(st, 1);
-  assert.equal(st.projectiles.length, 2 * C.DOUBLE_AMMO);
+  assert.ok(Math.abs(Math.abs(a.y - b.y) - 2 * C.DOUBLE_GAP) < 1e-6 && a.vx === b.vx, 'left barrel, then right');
+  for (let i = 2; i < 14; i++) press(st, 1);
+  assert.equal(st.projectiles.length, 14);
   assert.equal(st.tanks[0].weapon, null);
 });
 

@@ -22,7 +22,7 @@
     MISSILE_SWITCH: 2 * TICK, MISSILE_SWITCH_RATIO: 0.6,  // another tank must stay this much closer this long to steal the lock
     RAY_CHARGE: 2 * TICK, RAY_LIFE: 36, RAY_KILL: 12, RAY_W: 6,
     FRAG_SPEED: 170, FRAG_R: 6, FRAG_FUSE: 10 * TICK, FRAG_SHARDS: 24, SHARD_SPEED: 320, SHARD_LIFE: 27, SHARD_R: 2,
-    DOUBLE_AMMO: 7, DOUBLE_GAP: 6,
+    DOUBLE_AMMO: 14, DOUBLE_GAP: 6,
     SHOT_AMMO: 3, SHOT_PELLETS: 24, SHOT_SPREAD: 0.4, SHOT_LIFE: 150, PELLET_R: 2,
     MINE_AMMO: 3, MINE_ARM: 2 * TICK, MINE_R: 9, MINE_PELLETS: 200,
     SHIELD_TIME: 6 * TICK, SHIELD_R: 36,
@@ -410,9 +410,9 @@
           t.weapon = null;
         }
         break;
-      case 'double':
+      case 'double': // the two barrels take turns, one bullet per press
         if (!press) break;
-        for (const side of [-1, 1]) shoot(state, t, 'bullet', 0, side * C.DOUBLE_GAP, C.BULLET_SPEED, C.BULLET_R, C.BULLET_LIFE);
+        shoot(state, t, 'bullet', 0, (w.ammo % 2 ? 1 : -1) * C.DOUBLE_GAP, C.BULLET_SPEED, C.BULLET_R, C.BULLET_LIFE);
         if (--w.ammo <= 0) t.weapon = null;
         break;
       case 'shotgun':

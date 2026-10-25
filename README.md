@@ -39,7 +39,7 @@ The list matches TankTrouble.com's crates plus the death ray and frag bomb from 
 | Homing missile | Flies and bounces for 3 s, then locks on to the closest tank (possibly you) and hunts it through the maze, trailing smoke in that tank's colour. It switches only if another tank stays much closer for 2 s. Lasts 30 s. |
 | Death ray | 2 s charge with the tank frozen, then a beam that goes through walls and stops at white space. |
 | Frag bomb | A big, slow shot. Fire again (or hit a tank, or wait 10 s) to burst it into 24 shards that stop at walls. |
-| Double barrel | Two thick barrels: two parallel bullets per shot, 7 shots. |
+| Double barrel | Two thick barrels that fire one at a time, taking turns: 14 shots. |
 | Shotgun | 24 short-range pellets in a spread, 3 shots. |
 | Mines | 3 mines. Each arms after 2 s, fades almost out of sight, and bursts into 200 tiny pellets when a tank drives over it. |
 | Shield | A blue force field for 6 s. Nothing can hit you; every shot bounces off it, your own included. |
