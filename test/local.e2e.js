@@ -53,11 +53,20 @@ fs.mkdirSync(shots, { recursive: true });
     await page.locator('.keys .btn').click();
   });
 
-  await step('play starts a round with two tanks', async () => {
+  await step('play starts a round with two tanks after a 3-2-1 countdown over a blurred view', async () => {
     await page.click('#play');
     assert.equal(await page.locator('#overlay').isHidden(), true);
     const t = await tanks();
     assert.equal(t.length, 2);
+    await page.waitForSelector('#count:not([hidden])');
+    assert.equal(await page.locator('#count').innerText(), '3');
+    assert.equal(await page.evaluate(() => document.querySelector('#game').classList.contains('blur')), true);
+    await page.screenshot({ path: path.join(shots, 'local-countdown.png') });
+    await hold('KeyW', 300);
+    assert.deepEqual((await tanks())[0], t[0], 'no driving during the countdown');
+    await page.waitForFunction(() => mazeTanks.match.state.countdown === 0, null, { timeout: 5000 });
+    assert.equal(await page.locator('#count').isHidden(), true);
+    assert.equal(await page.evaluate(() => document.querySelector('#game').classList.contains('blur')), false);
   });
 
   await step('player 1 drives (W) and turns (S); player 2 turns (←) and drives back (↓)', async () => {
@@ -92,10 +101,14 @@ fs.mkdirSync(shots, { recursive: true });
       st.crates = G.POWERUPS.map((type, i) => ({ id: 900 + i, type, x: ((i % st.maze.w) + 0.5) * 100, y: (Math.floor(i / st.maze.w) + 0.5) * 100 }))
         .filter(c => Math.hypot(c.x - a.x, c.y - a.y) > 60 && Math.hypot(c.x - b.x, c.y - b.y) > 60);
       st.mines.push({ id: 800, owner: 2, x: b.x + 40, y: b.y, age: 0 });
-      G.shoot(st, b, 'missile', 0, 0, G.C.MISSILE_SPEED, G.C.MISSILE_R, G.C.MISSILE_LIFE, { target: 1 });
+      G.shoot(st, b, 'missile', 0, 0, G.C.MISSILE_SPEED, G.C.MISSILE_R, G.C.MISSILE_LIFE, { target: 1, rival: 0 });
+      st.projectiles.at(-1).age = G.C.MISSILE_SEEK; // locked on to player 1
       st.crateTimer = 1e9;
     });
     await page.waitForTimeout(250);
+    const smoke = await page.evaluate(() => mazeTanks.scene.smoke.map(s => s.color));
+    const target = await page.evaluate(() => Game.COLORS[mazeTanks.match.player(1).look.body]);
+    assert.ok(smoke.includes(target), 'missile smoke takes the colour of the tank it is chasing');
     await page.screenshot({ path: path.join(shots, 'local-powerups.png') });
   });
 

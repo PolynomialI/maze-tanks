@@ -12,17 +12,18 @@
     TICK, DT: 1 / TICK,
     CELL: 100, WALL: 4,                          // wall half-thickness
     TANK_L: 40, TANK_W: 32, MUZZLE: 30,
-    TANK_SPEED: 150, TANK_BACK: 105, TANK_TURN: 3.6,
-    BULLET_R: 4, BULLET_SPEED: 210, BULLET_LIFE: 20 * TICK, MAX_BULLETS: 5,
-    END_DELAY: 3 * TICK,
+    TANK_SPEED: 165, TANK_BACK: 115.5, TANK_TURN: 3.6,
+    BULLET_R: 4, BULLET_SPEED: 210, BULLET_LIFE: 20 * TICK, MAX_BULLETS: 7,
+    END_DELAY: 3 * TICK, COUNTDOWN: 3 * TICK,
     CRATE_R: 13, CRATE_MAX: 3, CRATE_MIN_T: 3 * TICK, CRATE_MAX_T: 8 * TICK,
-    GAT_AMMO: 25, GAT_SPIN: TICK, GAT_EVERY: 4, GAT_SPEED: 240, GAT_R: 3, GAT_LIFE: 5 * TICK, GAT_SPREAD: 0.12,
-    LASER_SPEED: 1500, LASER_LIFE: 48, LASER_R: 1.5, AIM_LEN: 600,
-    MISSILE_SPEED: 180, MISSILE_R: 5, MISSILE_LIFE: 30 * TICK, MISSILE_SEEK: 5 * TICK, MISSILE_TURN: 3.5,
+    GAT_AMMO: 40, GAT_BURSTS: 2, GAT_SPIN: TICK, GAT_EVERY: 4, GAT_SPEED: 240, GAT_LIFE: 5 * TICK, GAT_SPREAD: 0.12,
+    LASER_SPEED: 3000, LASER_LIFE: 48, LASER_R: 1.5, AIM_LEN: 2400,
+    MISSILE_SPEED: 180, MISSILE_R: 5, MISSILE_LIFE: 30 * TICK, MISSILE_SEEK: 3 * TICK, MISSILE_TURN: 3.5,
+    MISSILE_SWITCH: 2 * TICK, MISSILE_SWITCH_RATIO: 0.6,  // another tank must stay this much closer this long to steal the lock
     RAY_CHARGE: 2 * TICK, RAY_LIFE: 36, RAY_KILL: 12, RAY_W: 6,
     FRAG_SPEED: 170, FRAG_R: 6, FRAG_FUSE: 10 * TICK, FRAG_SHARDS: 24, SHARD_SPEED: 320, SHARD_LIFE: 27, SHARD_R: 2,
-    DOUBLE_AMMO: 5, DOUBLE_GAP: 6,
-    SHOT_AMMO: 3, SHOT_PELLETS: 14, SHOT_SPREAD: 0.4, SHOT_LIFE: 150, PELLET_R: 2,
+    DOUBLE_AMMO: 7, DOUBLE_GAP: 6,
+    SHOT_AMMO: 3, SHOT_PELLETS: 24, SHOT_SPREAD: 0.4, SHOT_LIFE: 150, PELLET_R: 2,
     MINE_AMMO: 3, MINE_ARM: 2 * TICK, MINE_R: 9, MINE_PELLETS: 200,
     SHIELD_TIME: 6 * TICK, SHIELD_R: 36,
     STEP: 5                                      // longest projectile sub-step
@@ -32,7 +33,7 @@
   const COLORS = ['#e2493b', '#f08c24', '#f2c230', '#8cc63f', '#2e9e4f', '#26a69a', '#3d8fe0', '#2f55b8', '#8e5cc7', '#e46aa7', '#8a6a52', '#4f5359'];
   const LOOK = { colors: COLORS.length, barrels: 4, accessories: 5 };
   const NOINPUT = {};
-  const FIZZLE = { bullet: 1, gat: 1, missile: 1 }; // shots that leave a puff of smoke when they time out
+  const FIZZLE = { bullet: 1, missile: 1 }; // shots that leave a puff of smoke when they time out
 
   // ---------- random ----------
   function rnd(s) {
@@ -83,7 +84,7 @@
     return new Array(w * h).fill(0);
   }
 
-  function makeMaze(w, h, s, loops = 0.12, holes = true) {
+  function makeMaze(w, h, s, loops = 0.2, holes = true, rooms = 0) {
     const off = holes ? carveHoles(w, h, s) : new Array(w * h).fill(0);
     const hw = [], vw = [];
     for (let y = 0; y <= h; y++) hw.push(new Array(w).fill(1));
@@ -109,15 +110,50 @@
     // no walls between two holes (or a hole and the outside)
     for (let y = 0; y <= h; y++) for (let x = 0; x < w; x++) if (isOff(m, x, y - 1) && isOff(m, x, y)) hw[y][x] = 0;
     for (let y = 0; y < h; y++) for (let x = 0; x <= w; x++) if (isOff(m, x - 1, y) && isOff(m, x, y)) vw[y][x] = 0;
-    // knock out a few extra interior walls so the maze has loops
+    // knock out a share (loops) of the remaining interior walls so the maze has loops; always at least one
     const inner = [];
     for (let y = 1; y < h; y++) for (let x = 0; x < w; x++) if (hw[y][x] && !isOff(m, x, y - 1) && !isOff(m, x, y)) inner.push([hw, x, y]);
     for (let y = 0; y < h; y++) for (let x = 1; x < w; x++) if (vw[y][x] && !isOff(m, x - 1, y) && !isOff(m, x, y)) inner.push([vw, x, y]);
-    for (let n = Math.round(active.length * loops); n > 0 && inner.length; n--) {
+    for (let n = Math.min(inner.length - 1, Math.max(1, Math.round(inner.length * loops))); n > 0; n--) {
       const [g, x, y] = inner.splice(Math.floor(rnd(s) * inner.length), 1)[0];
       g[y][x] = 0;
     }
+    // open rooms: every wall inside a random rectangle removed
+    for (let r = 0; r < rooms; r++) {
+      const rw = rint(s, 2, Math.max(2, Math.min(6, Math.floor(w * 0.6)))), rh = rint(s, 2, Math.max(2, Math.min(4, Math.floor(h * 0.6))));
+      const x0 = rint(s, 0, w - rw), y0 = rint(s, 0, h - rh);
+      for (let y = y0; y < y0 + rh; y++) for (let x = x0; x < x0 + rw; x++) {
+        if (isOff(m, x, y)) continue;
+        if (x > x0 && !isOff(m, x - 1, y)) vw[y][x] = 0;
+        if (y > y0 && !isOff(m, x, y - 1)) hw[y][x] = 0;
+      }
+    }
+    // floor shading: random light/dark cells, smoothed so dark cells cluster together
+    let shade = Array.from({ length: w * h }, () => (rnd(s) < 0.45 ? 1 : 0));
+    for (let it = 0; it < 2; it++) shade = shade.map((v, c) => {
+      const x = c % w, y = (c / w) | 0;
+      let dark = 0, all = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (x + dx < 0 || y + dy < 0 || x + dx >= w || y + dy >= h) continue;
+        all++; dark += shade[(y + dy) * w + x + dx];
+      }
+      return dark * 2 > all ? 1 : dark * 2 < all ? 0 : v;
+    });
+    m.shade = shade;
     return m;
+  }
+
+  // Always landscape, from tiny to huge, and from tight mazes to wide-open arenas.
+  function mazeShape(s, n) {
+    const minH = n <= 2 ? 2 : n <= 4 ? 3 : 4, size = rnd(s);
+    let h = size < 0.15 ? rint(s, 2, 3) : size < 0.4 ? rint(s, 3, 5) : size < 0.75 ? rint(s, 5, 8) : rint(s, 8, 12);
+    h = Math.max(h, minH);
+    let w = Math.min(24, Math.max(h + 1, Math.round(h * (1.35 + rnd(s) * 0.75))));
+    while (w * h < 3 * n) { h++; w = Math.max(w, Math.round(h * 1.4)); }
+    const style = rnd(s); // 45% tight mazes, 35% medium, 20% open arenas that still keep some cover
+    const loops = style < 0.45 ? 0.05 + rnd(s) * 0.1 : style < 0.8 ? 0.15 + rnd(s) * 0.2 : 0.35 + rnd(s) * 0.25;
+    const rooms = w * h < 20 ? 0 : style < 0.45 ? 0 : style < 0.8 ? rint(s, 0, 1) : rint(s, 1, 2);
+    return { w, h, loops, rooms, holes: w * h >= 12 };
   }
 
   // Wall rectangles (collinear runs merged so there are no seams).
@@ -266,19 +302,23 @@
     return null;
   }
 
+  // Tank poses live on a fine grid (1/256 unit, 1/4096 rad) so a snapshot carries them exactly and a client
+  // replaying its inputs from one gets bit-for-bit the same result as the server.
+  const snap = v => Math.round(v * 256) / 256, snapA = a => Math.round(wrap(a) * 4096) / 4096;
+
   function moveTank(state, t, inp) {
     if (!t.alive || t.charge > 0) return;
     const turn = (inp.right ? 1 : 0) - (inp.left ? 1 : 0);
     if (turn) {
-      const a = wrap(t.a + turn * C.TANK_TURN * C.DT);
+      const a = snapA(t.a + turn * C.TANK_TURN * C.DT);
       const p = placeTank(state, t, t.x, t.y, a);
-      if (p) { t.x = p[0]; t.y = p[1]; t.a = a; }
+      if (p) { t.x = snap(p[0]); t.y = snap(p[1]); t.a = a; }
     }
     const mv = (inp.up ? 1 : 0) - (inp.down ? 1 : 0);
     if (mv) {
       const d = (mv > 0 ? C.TANK_SPEED : -C.TANK_BACK) * C.DT;
       const p = placeTank(state, t, t.x + Math.cos(t.a) * d, t.y + Math.sin(t.a) * d, t.a);
-      if (p) { t.x = p[0]; t.y = p[1]; }
+      if (p) { t.x = snap(p[0]); t.y = snap(p[1]); }
     }
   }
 
@@ -342,18 +382,21 @@
       return;
     }
     switch (w.type) {
-      case 'gatling':
-        if (!inp.fire) { w.spin = 0; break; }
+      case 'gatling': // hold to spin up and fire; a finished burst needs a release before the next one
+        if (!inp.fire) { w.spin = 0; w.wait = false; break; }
+        if (w.wait) break;
         if (++w.spin >= C.GAT_SPIN && (w.spin - C.GAT_SPIN) % C.GAT_EVERY === 0) {
-          shoot(state, t, 'gat', (rnd(rng) * 2 - 1) * C.GAT_SPREAD, 0, C.GAT_SPEED, C.GAT_R, C.GAT_LIFE);
-          if (--w.ammo <= 0) t.weapon = null;
+          shoot(state, t, 'gat', (rnd(rng) * 2 - 1) * C.GAT_SPREAD, 0, C.GAT_SPEED, C.PELLET_R, C.GAT_LIFE);
+          if (--w.ammo > 0) break;
+          if (--w.bursts <= 0) t.weapon = null;
+          else { w.ammo = C.GAT_AMMO; w.wait = true; w.spin = 0; }
         }
         break;
       case 'laser':
         if (press) { shoot(state, t, 'laser', 0, 0, C.LASER_SPEED, C.LASER_R, C.LASER_LIFE, { path: [] }); t.weapon = null; }
         break;
       case 'missile':
-        if (press) { shoot(state, t, 'missile', 0, 0, C.MISSILE_SPEED, C.MISSILE_R, C.MISSILE_LIFE, { target: null }); t.weapon = null; }
+        if (press) { shoot(state, t, 'missile', 0, 0, C.MISSILE_SPEED, C.MISSILE_R, C.MISSILE_LIFE, { target: null, rival: 0 }); t.weapon = null; }
         break;
       case 'deathray':
         if (press) t.charge = C.RAY_CHARGE;
@@ -415,16 +458,19 @@
 
   function steerMissile(state, p) {
     if (p.age < C.MISSILE_SEEK) return;
-    if (p.target == null || p.age % 30 === 0) {
-      let best = Infinity;
-      p.target = null;
-      for (const t of state.tanks) {
-        const d = t.alive ? Math.hypot(t.x - p.x, t.y - p.y) : Infinity;
-        if (d < best) { best = d; p.target = t.id; }
-      }
+    let near = null, nd = Infinity;
+    for (const o of state.tanks) {
+      const d = o.alive ? Math.hypot(o.x - p.x, o.y - p.y) : Infinity;
+      if (d < nd) { nd = d; near = o; }
     }
+    const cur = state.tanks.find(o => o.id === p.target && o.alive);
+    if (!cur) { p.target = near ? near.id : null; p.rival = 0; }
+    else if (near !== cur && nd < C.MISSILE_SWITCH_RATIO * Math.hypot(cur.x - p.x, cur.y - p.y)) {
+      // switch only after another tank has stayed much closer for a while
+      if (++p.rival >= C.MISSILE_SWITCH) { p.target = near.id; p.rival = 0; }
+    } else p.rival = 0;
     const t = state.tanks.find(o => o.id === p.target && o.alive);
-    if (!t) { p.target = null; return; }
+    if (!t) return;
     let gx = t.x, gy = t.y;
     const clear = (x, y) => !castRay(state.walls, p.x, p.y, x - p.x, y - p.y, p.r);
     if (!clear(t.x, t.y)) {
@@ -435,21 +481,22 @@
         if (clear(cx, cy)) break;
       }
     }
-    const cur = Math.atan2(p.vy, p.vx), d = wrap(Math.atan2(gy - p.y, gx - p.x) - cur), m = C.MISSILE_TURN * C.DT;
-    const a = cur + Math.max(-m, Math.min(m, d));
+    const head = Math.atan2(p.vy, p.vx), d = wrap(Math.atan2(gy - p.y, gx - p.x) - head), m = C.MISSILE_TURN * C.DT;
+    const a = head + Math.max(-m, Math.min(m, d));
     p.vx = Math.cos(a) * C.MISSILE_SPEED; p.vy = Math.sin(a) * C.MISSILE_SPEED;
   }
 
   // ---------- per-tick systems ----------
+  // Shots bounce off a force field: anything inside it heading toward the tank is turned back.
   function shieldBounce(state, p, px, py) {
     for (const t of state.tanks) {
       if (!t.alive || !t.shield) continue;
-      const R = C.SHIELD_R + p.r;
-      if (Math.hypot(px - t.x, py - t.y) <= R || Math.hypot(p.x - t.x, p.y - t.y) > R) continue;
-      const nx = (p.x - t.x) / Math.hypot(p.x - t.x, p.y - t.y), ny = (p.y - t.y) / Math.hypot(p.x - t.x, p.y - t.y);
-      const dot = p.vx * nx + p.vy * ny;
+      const R = C.SHIELD_R + p.r, dx = p.x - t.x, dy = p.y - t.y, d = Math.hypot(dx, dy);
+      if (d > R || d === 0) continue;
+      const nx = dx / d, ny = dy / d, dot = p.vx * nx + p.vy * ny;
+      if (dot >= 0) continue;
       p.vx -= 2 * dot * nx; p.vy -= 2 * dot * ny;
-      p.x = px; p.y = py;
+      if (Math.hypot(px - t.x, py - t.y) > R) { p.x = px; p.y = py; }
       p.bounces++;
       if (p.path) p.path.push([p.x, p.y]);
     }
@@ -469,7 +516,7 @@
         if (p.dead) break;
         shieldBounce(state, p, px, py);
         for (const t of state.tanks) {
-          if (!t.alive || !hitsTank(t, p.x, p.y, p.r)) continue;
+          if (!t.alive || t.shield || !hitsTank(t, p.x, p.y, p.r)) continue;
           if (p.type === 'frag') { explodeFrag(state, p); break; }
           kill(state, t, p.owner);
           if (p.type !== 'laser') { p.dead = true; break; }
@@ -532,7 +579,10 @@
     for (const c of state.crates) for (const t of state.tanks) {
       if (c.taken || !t.alive || !hitsTank(t, c.x, c.y, C.CRATE_R)) continue;
       if (c.type === 'shield') { if (t.shield) continue; t.shield = C.SHIELD_TIME; }
-      else { if (t.weapon || t.charge) continue; t.weapon = { type: c.type, ammo: AMMO[c.type] || 1, spin: 0, bomb: null }; }
+      else {
+        if (t.weapon || t.charge) continue;
+        t.weapon = { type: c.type, ammo: AMMO[c.type] || 1, spin: 0, bomb: null, bursts: c.type === 'gatling' ? C.GAT_BURSTS : 1, wait: false };
+      }
       c.taken = true;
     }
     state.crates = state.crates.filter(c => !c.taken);
@@ -541,8 +591,8 @@
   // ---------- rounds ----------
   function newRound(seed, players) {
     const s = { seed: seed | 0 }, n = players.length;
-    const w = rint(s, 5 + (n >> 1), 13 + n), h = rint(s, 4 + ((n / 3) | 0), 8 + (n >> 1));
-    const maze = makeMaze(w, h, s);
+    const { w, h, loops, rooms, holes } = mazeShape(s, n);
+    const maze = makeMaze(w, h, s, loops, holes, rooms);
     const cells = [...Array(w * h).keys()].filter(c => !maze.off[c]);
     for (let i = cells.length - 1; i > 0; i--) { const j = rint(s, 0, i); [cells[i], cells[j]] = [cells[j], cells[i]]; }
     const picks = [];
@@ -551,24 +601,31 @@
     for (const c of cells) if (picks.length < n && !picks.includes(c)) picks.push(c);
     const state = {
       tick: 0, rng: s, maze, walls: buildWalls(maze), tanks: [], projectiles: [], mines: [], beams: [], crates: [], fx: [],
-      kills: [], phase: 'play', endTimer: 0, winner: null, crateTimer: rint(s, C.CRATE_MIN_T, C.CRATE_MAX_T), nextId: 1
+      kills: [], phase: 'play', endTimer: 0, winner: null, crateTimer: rint(s, C.CRATE_MIN_T, C.CRATE_MAX_T), nextId: 1,
+      countdown: C.COUNTDOWN
     };
     players.forEach((p, i) => state.tanks.push({
       id: p.id, x: (picks[i] % w + 0.5) * C.CELL, y: (((picks[i] / w) | 0) + 0.5) * C.CELL,
-      a: rnd(s) * Math.PI * 2 - Math.PI, alive: true, weapon: null, charge: 0, shield: 0, fireHeld: true
+      a: snapA(rnd(s) * Math.PI * 2 - Math.PI), alive: true, weapon: null, charge: 0, shield: 0, fireHeld: true
     }));
     return state;
   }
 
-  function step(state, inputs) {
+  // One 1/60 s of a player's input. Online inputs carry 'go' (the client's countdown is over; its countdown starts
+  // after the server's, so a 'go' while the server still has over half a second left is ignored).
+  // Local inputs follow the round's own countdown.
+  function control(state, t, inp) {
+    if (!t.alive) return;
+    if (inp.go === undefined ? state.countdown > 0 : !inp.go || state.countdown > C.TICK / 2) return;
+    moveTank(state, t, inp);
+    fire(state, t, inp);
+  }
+
+  // Everything except the players' own tanks: shots, mines, rays, crates, round end.
+  function stepWorld(state) {
     state.tick++;
-    for (const t of state.tanks) {
-      if (!t.alive) continue;
-      const inp = inputs[t.id] || NOINPUT;
-      moveTank(state, t, inp);
-      fire(state, t, inp);
-      if (t.shield > 0) t.shield--;
-    }
+    if (state.countdown > 0) { state.countdown--; return; }
+    for (const t of state.tanks) if (t.alive && t.shield > 0) t.shield--;
     stepProjectiles(state);
     stepMines(state);
     stepBeams(state);
@@ -581,6 +638,11 @@
       state.phase = 'over';
       state.winner = alive.length === 1 ? alive[0].id : null;
     }
+  }
+
+  function step(state, inputs) {
+    for (const t of state.tanks) control(state, t, inputs[t.id] || NOINPUT);
+    stepWorld(state);
   }
 
   // A series of rounds with per-player wins and kills. Players who join mid-round watch until the next one.
@@ -609,12 +671,21 @@
       this.version++;
     }
     inRound(id) { return !!this.state && this.state.tanks.some(t => t.id === id); }
+    // Local play: every player's current input, then the world.
     step() {
+      if (!this.state) return;
+      for (const p of this.players) this.control(p.id, p.input);
+      this.advance();
+    }
+    // Online: the server applies each received input as it arrives, then advances the world once per update.
+    control(id, inp) {
+      const t = this.state && this.state.tanks.find(o => o.id === id);
+      if (t) control(this.state, t, inp);
+    }
+    advance() {
       const st = this.state;
       if (!st) return;
-      const inputs = {};
-      for (const p of this.players) inputs[p.id] = p.input;
-      step(st, inputs);
+      stepWorld(st);
       for (const [by, victim] of st.kills) {
         const p = by !== victim && this.player(by);
         if (p) { p.kills++; this.version++; }
@@ -640,12 +711,13 @@
   }
 
   const KEYS = ['up', 'down', 'left', 'right', 'fire'];
-  function encodeInput(i) { return KEYS.reduce((b, k, n) => b | (i[k] ? 1 << n : 0), 0); }
-  function decodeInput(b) { const i = {}; KEYS.forEach((k, n) => { i[k] = !!(b & (1 << n)); }); return i; }
+  // Bits 0-4: KEYS; bit 5: go (the sender's round countdown is over).
+  function encodeInput(i) { return KEYS.reduce((b, k, n) => b | (i[k] ? 1 << n : 0), i.go === false ? 0 : 32); }
+  function decodeInput(b) { const i = { go: !!(b & 32) }; KEYS.forEach((k, n) => { i[k] = !!(b & (1 << n)); }); return i; }
 
   return {
     C, POWERUPS, COLORS, LOOK, KEYS, rnd, rint, wrap, isOff, makeMaze, buildWalls, tankPoly, rectPoly, sat, hitsTank, castRay,
-    travel, tracePath, placeTank, moveTank, fire, shoot, kill, pathCells, newRound, step, Match, cleanLook,
+    travel, tracePath, placeTank, moveTank, control, fire, shoot, kill, pathCells, newRound, step, stepWorld, Match, cleanLook,
     encodeInput, decodeInput
   };
 });

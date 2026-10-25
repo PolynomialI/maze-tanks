@@ -111,7 +111,7 @@ test('inputs drive the tank on the server and are acknowledged', async () => {
   const [a, b] = [player(), player()];
   const ida = await hello(a); await hello(b);
   a.queue(); b.queue();
-  const s0 = await a.next(m => m.t === 's');
+  const s0 = await a.next(m => m.t === 's' && m.cd === 0, 6000); // after the round countdown
   const t0 = s0.T.find(t => t[0] === ida);
   for (let q = 1; q <= 60; q++) { a.send({ t: 'i', q, k: G.encodeInput({ left: true }) }); await sleep(16); }
   const s1 = await a.next(m => m.t === 's' && m.a === 60, 3000);
@@ -130,12 +130,12 @@ test('stats: kills and wins are counted; a disconnect mid-round gives the round 
   // round 1: a kills b
   const st = lobby.match.state;
   G.kill(st, st.tanks.find(t => t.id === idb), ida);
-  let pl = await a.next(m => m.t === 'pl' && m.p.find(p => p.id === ida).wins === 1, 5000);
+  let pl = await a.next(m => m.t === 'pl' && m.p.find(p => p.id === ida).wins === 1, 10000);
   assert.deepEqual(pl.p.map(p => [p.wins, p.kills]), [[1, 1], [0, 0]]);
   // round 2: b leaves, a wins again, then the lobby waits for players
   await a.next(m => m.t === 'r' && m.n === 2);
   b.close();
-  pl = await a.next(m => m.t === 'pl' && m.w === 1, 5000);
+  pl = await a.next(m => m.t === 'pl' && m.w === 1, 10000);
   assert.deepEqual(pl.p.map(p => [p.id, p.wins, p.kills]), [[ida, 2, 1]]);
   // a newcomer joins the waiting lobby and a new round starts straight away
   const c = player();
@@ -145,6 +145,49 @@ test('stats: kills and wins are counted; a disconnect mid-round gives the round 
   pl = await a.next(m => m.t === 'pl' && m.w === 0 && m.p.length === 2);
   assert.equal(pl.p.every(p => !p.out), true);
   a.close(); c.close();
+  await sleep(100);
+});
+
+test('late, bursty input delivery: every input is applied in order, so the server ends where the client predicted', async () => {
+  const [a, b] = [player(), player()];
+  const ida = await hello(a); await hello(b);
+  a.queue(); b.queue();
+  const r = await a.next(m => m.t === 'r');
+  const s0 = await a.next(m => m.t === 's' && m.cd === 0, 6000);
+  const me = s0.T.find(t => t[0] === ida), other = s0.T.find(t => t[0] !== ida);
+  const t = { id: ida, x: me[1], y: me[2], a: me[3], alive: true, charge: 0 };
+  const world = { walls: G.buildWalls(r.maze), tanks: [t, { id: other[0], x: other[1], y: other[2], a: other[3], alive: true }] };
+  const inputs = [];
+  for (let q = 1; q <= 150; q++) inputs.push({ go: true, up: q % 50 < 35, left: q < 40, right: q > 100 });
+  for (const inp of inputs) G.moveTank(world, t, inp); // what the client predicts
+  let q = 0;
+  while (q < inputs.length) { // random bursts of 1-15 inputs with pauses up to 250 ms
+    const n = 1 + Math.floor(Math.random() * 15);
+    for (let i = 0; i < n && q < inputs.length; i++, q++) a.send({ t: 'i', q: q + 1, k: G.encodeInput(inputs[q]) });
+    await sleep(Math.random() * 250);
+  }
+  const s1 = await a.next(m => m.t === 's' && m.a === 150, 5000);
+  const mine = s1.T.find(row => row[0] === ida);
+  assert.ok(Math.hypot(mine[1] - me[1], mine[2] - me[2]) > 0 || mine[3] !== me[3], 'tank moved');
+  assert.deepEqual([mine[1], mine[2], mine[3]], [t.x, t.y, t.a], 'server and client prediction agree exactly');
+  a.close(); b.close();
+  await sleep(100);
+});
+
+test('sending inputs faster than real time does not speed a tank up', async () => {
+  const [a, b] = [player(), player()];
+  const ida = await hello(a); await hello(b);
+  a.queue(); b.queue();
+  await a.next(m => m.t === 's' && m.cd === 0, 6000);
+  const lobby = [...app.mm.lobbies].find(l => l.match.player(ida));
+  let applied = 0;
+  const control = lobby.match.control.bind(lobby.match);
+  lobby.match.control = (id, inp) => { if (id === ida) applied++; control(id, inp); };
+  for (let q = 1; q <= 400; q++) a.send({ t: 'i', q, k: G.encodeInput({ up: true }) });
+  await sleep(1000);
+  assert.ok(applied <= 60 + 30 + 15, 'applied at most real time plus the catch-up allowance: ' + applied);
+  assert.ok(applied >= 60, 'but keeps applying them');
+  a.close(); b.close();
   await sleep(100);
 });
 

@@ -39,12 +39,15 @@ const shots = path.join(__dirname, 'screens');
     await a.screenshot({ path: path.join(shots, 'online-queue.png') });
     await b.click('#play');
     await b.waitForFunction(() => mazeTanksOnline.players.length === 2);
+    await b.waitForSelector('#count:not([hidden])'); // round countdown over a blurred view
+    assert.equal(await b.evaluate(() => document.querySelector('#game').classList.contains('blur')), true);
     const seen = await b.evaluate(() => mazeTanksOnline.players.map(p => p.look.body));
     assert.ok(seen.includes(8));
   });
 
   await step('own tank responds instantly (prediction) and the server agrees', async () => {
-    await a.waitForFunction(() => mazeTanksOnline.pred);
+    await a.waitForFunction(() => mazeTanksOnline.pred && mazeTanksOnline.cd === 0, null, { timeout: 6000 });
+    assert.equal(await a.locator('#count').isHidden(), true);
     const p0 = await a.evaluate(() => ({ ...mazeTanksOnline.pred }));
     await a.keyboard.down('ArrowLeft');
     await a.waitForTimeout(40);
@@ -54,15 +57,16 @@ const shots = path.join(__dirname, 'screens');
     await a.keyboard.up('ArrowLeft');
     await a.waitForTimeout(400);
     const pred = await a.evaluate(() => mazeTanksOnline.pred), server = await myTank(a);
-    assert.ok(Math.abs(pred.a - server[3]) < 0.01, 'prediction matches the server');
+    assert.deepEqual([pred.x, pred.y, pred.a], [server[1], server[2], server[3]], 'prediction matches the server exactly');
   });
 
   await step('bullets of all three sizes are drawn on the other player\'s screen (pixel check)', async () => {
     const ida = await a.evaluate(() => mazeTanksOnline.me);
+    // open spots (cell centres and quarter points, clear of walls) away from the tanks; mazes can be tiny
     const st = [...app.mm.lobbies][0].match.state, free = [];
-    for (let y = 0; y < st.maze.h; y++) for (let x = 0; x < st.maze.w; x++) {
-      const cx = (x + 0.5) * 100, cy = (y + 0.5) * 100;
-      if (!G.isOff(st.maze, x, y) && st.tanks.every(t => Math.hypot(t.x - cx, t.y - cy) > 120)) free.push([cx, cy]);
+    for (let y = 0; y < st.maze.h; y++) for (let x = 0; x < st.maze.w; x++) for (const [ox, oy] of [[0, 0], [-25, -25], [25, -25], [-25, 25], [25, 25]]) {
+      const cx = (x + 0.5) * 100 + ox, cy = (y + 0.5) * 100 + oy;
+      if (!G.isOff(st.maze, x, y) && st.tanks.every(t => Math.hypot(t.x - cx, t.y - cy) > 60)) free.push([cx, cy]);
     }
     ['bullet', 'gat', 'pellet'].forEach((type, i) =>
       st.projectiles.push({ id: 5000 + i, type, owner: ida, x: free[i][0], y: free[i][1], vx: 0, vy: 0, r: 2, life: 1e6, age: 0, bounces: 0 }));
@@ -77,6 +81,17 @@ const shots = path.join(__dirname, 'screens');
       }, type, { timeout: 3000 });
     }
     await b.screenshot({ path: path.join(shots, 'online-bullets.png') });
+    // a missile locked on to player 2 trails smoke in player 2's colour on both screens
+    const idb = await b.evaluate(() => mazeTanksOnline.me), tb = st.tanks.find(t => t.id === idb);
+    const far = free.reduce((f, p) => (Math.hypot(p[0] - tb.x, p[1] - tb.y) > Math.hypot(f[0] - tb.x, f[1] - tb.y) ? p : f));
+    st.projectiles.push({ id: 5100, type: 'missile', owner: ida, x: far[0], y: far[1], vx: 0, vy: 0, r: 5, life: 1e6,
+      age: G.C.MISSILE_SEEK, bounces: 0, target: idb, rival: 0 });
+    for (const page of [a, b]) {
+      await page.waitForFunction(idb => {
+        const look = mazeTanksOnline.players.find(p => p.id === idb).look;
+        return mazeTanksOnline.scene.smoke.some(s => s.color === Game.COLORS[look.body]);
+      }, idb, { timeout: 3000 });
+    }
     st.projectiles = st.projectiles.filter(p => p.id < 5000);
   });
 

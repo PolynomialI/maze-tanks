@@ -105,5 +105,13 @@
     ok.focus();
   }
 
-  return { ICON, el, button, statsBar, garage };
+  // Big 3-2-1 over a blurred view before each round.
+  function countdown(canvas, el, ticks) {
+    const on = ticks > 0;
+    canvas.classList.toggle('blur', on);
+    el.hidden = !on;
+    if (on) el.textContent = Math.ceil(ticks / G.C.TICK);
+  }
+
+  return { ICON, el, button, statsBar, garage, countdown };
 });

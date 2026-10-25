@@ -148,6 +148,7 @@
       acc = Math.min(acc, G.C.DT);
     }
     scene.draw(view(playing ? acc / G.C.DT : 1), t);
+    U.countdown($('#game'), $('#count'), playing && match.state ? match.state.countdown : 0);
     bar.update(match ? match.players : looks.map((look, i) => ({ id: i + 1, look, wins: 0, kills: 0 })));
     requestAnimationFrame(frame);
   }

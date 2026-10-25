@@ -148,7 +148,7 @@
   }
   const CHIPS = splinters(16, 7);
   const PELLETS = CHIPS.map(pts => pts.map(v => v * 2));
-  const BULLET_SIZE = { bullet: C.BULLET_R, gat: C.GAT_R, frag: C.FRAG_R };
+  const BULLET_SIZE = { bullet: C.BULLET_R, frag: C.FRAG_R };
   const EXHAUST = '#8c8579', SMOKE = '#9c9c9c', BLAST = '#5e5e5e';
 
   // ---------- effect textures: smoke puffs and the force field ----------
@@ -157,7 +157,6 @@
     if (c[0] === '#') { const n = parseInt(c.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
     return c.match(/\d+/g).slice(0, 3).map(Number);
   }
-  const lighten = (c, f) => '#' + rgbOf(c).map(v => Math.round(v + (255 - v) * f).toString(16).padStart(2, '0')).join('');
 
   // Fractal value noise in [0, 1] on a size x size grid.
   function noise(size, seed) {
@@ -337,8 +336,8 @@
         const last = this.trail.get('m' + p.id);
         if (last && Math.hypot(p.x - last.x, p.y - last.y) < 5) continue;
         const sp = Math.hypot(p.vx, p.vy) || 1;
-        const color = p.target != null ? lighten(col(lookOf(p.target).body), 0.2) : SMOKE;
-        this.puff(p.x - (p.vx / sp) * 9, p.y - (p.vy / sp) * 9, 3, 11, 1.1, color, 0.6);
+        const color = p.target != null ? col(lookOf(p.target).body) : SMOKE;
+        this.puff(p.x - (p.vx / sp) * 9, p.y - (p.vy / sp) * 9, 3, 13, 1.2, color, 0.75);
         this.trail.set('m' + p.id, { x: p.x, y: p.y });
       }
       for (const f of v.fx || []) {
@@ -415,7 +414,7 @@
       ctx.setTransform(k, 0, 0, k, this.ox, this.oy);
       for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
         if (G.isOff(m, x, y)) continue;
-        ctx.fillStyle = FLOOR[(x + y) % 2];
+        ctx.fillStyle = FLOOR[m.shade ? m.shade[y * m.w + x] : (x + y) % 2];
         ctx.fillRect(x * C.CELL, y * C.CELL, C.CELL, C.CELL);
       }
       ctx.drawImage(this.decal, 0, 0, W, H);
@@ -477,7 +476,7 @@
 
       for (const t of v.tanks) if (t.alive) drawTank(ctx, t.look, t.x, t.y, t.a, t);
 
-      // projectiles: three bullet sizes (tiny splinters, round minigun shots, normal), plus laser and missile
+      // projectiles: tiny splinters (minigun, shotgun, mines, shrapnel), normal bullets, frag bomb, laser and missile
       for (const p of v.projectiles) {
         if (p.type === 'laser') {
           ctx.strokeStyle = col(lookOf(p.owner).turret); ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
@@ -492,7 +491,7 @@
           part(ctx, fin, poly(ctx, [-8, -6, -3, 0, -8, 6]));
           part(ctx, col(lookOf(p.owner).turret), poly(ctx, [-8, -3, 4, -3, 9, 0, 4, 3, -8, 3]));
           ctx.restore();
-        } else if (p.type === 'pellet' || p.type === 'shard') {
+        } else if (p.type === 'pellet' || p.type === 'shard' || p.type === 'gat') {
           ctx.save();
           ctx.translate(p.x, p.y); ctx.rotate(p.id * 1.7);
           ctx.fillStyle = INK;

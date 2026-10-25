@@ -3,7 +3,8 @@ const G = require('../shared/game.js');
 
 const MAX_PLAYERS = 8;
 const SNAP_EVERY = 3;      // snapshot every 3 updates = 20 per second
-const MAX_QUEUED_INPUTS = 10;
+const MAX_QUEUED_INPUTS = 120; // 2 s of inputs; only a broken client ever gets near this
+const MAX_CREDIT = 30;         // inputs a player may catch up on at once after a network hiccup (0.5 s)
 
 const r1 = v => Math.round(v * 10) / 10;
 
@@ -24,6 +25,7 @@ class Lobby {
     c.lobby = this;
     c.inputs = [];
     c.ack = 0;
+    c.credit = 0;
     this.match.addPlayer(c.id, c.look);
     c.send({ t: 'lobby', id: this.id });
     if (this.match.state && this.sentRound === this.match.round) c.send(this.roundMsg());
@@ -55,14 +57,18 @@ class Lobby {
   }
 
   tick() {
+    // Apply every input each player sent, in order. One per update on average (so nobody can speed up by
+    // sending more), with up to half a second banked so a late burst catches up at once instead of being dropped.
     for (const c of this.clients) {
-      const p = this.match.player(c.id);
-      if (!c.inputs.length || !p) continue;
-      const [seq, bits] = c.inputs.shift();
-      c.ack = seq;
-      p.input = G.decodeInput(bits);
+      c.credit = Math.min(c.credit + 1, MAX_CREDIT);
+      while (c.inputs.length && c.credit >= 1) {
+        const [seq, bits] = c.inputs.shift();
+        c.credit--;
+        c.ack = seq;
+        this.match.control(c.id, G.decodeInput(bits));
+      }
     }
-    this.match.step();
+    this.match.advance();
     this.ticks++;
     if (this.match.state && this.sentRound !== this.match.round) {
       this.sentRound = this.match.round;
@@ -82,7 +88,7 @@ class Lobby {
 
   roundMsg() {
     const m = this.match.state.maze;
-    return { t: 'r', n: this.match.round, maze: { w: m.w, h: m.h, hw: m.hw, vw: m.vw, off: m.off } };
+    return { t: 'r', n: this.match.round, cd: this.match.state.countdown, maze: { w: m.w, h: m.h, hw: m.hw, vw: m.vw, off: m.off, shade: m.shade } };
   }
 
   playersMsg() {
@@ -96,8 +102,8 @@ class Lobby {
   snapshot() {
     const st = this.match.state;
     return {
-      t: 's', n: this.match.round, k: st.tick, ph: st.phase,
-      T: st.tanks.map(t => [t.id, r1(t.x), r1(t.y), Math.round(t.a * 1e4) / 1e4, t.alive ? 1 : 0,
+      t: 's', n: this.match.round, k: st.tick, ph: st.phase, cd: st.countdown,
+      T: st.tanks.map(t => [t.id, t.x, t.y, t.a, t.alive ? 1 : 0, // exact: poses are kept on a fine grid
         t.weapon ? t.weapon.type : 0, t.charge, t.shield, t.weapon ? t.weapon.spin : 0]),
       P: st.projectiles.map(p => [p.id, p.type, r1(p.x), r1(p.y), p.owner,
         p.type === 'laser' ? p.path.map(q => [r1(q[0]), r1(q[1])])
@@ -143,7 +149,7 @@ class Matchmaker {
 
   input(c, seq, bits) {
     if (!c.lobby) return;
-    c.inputs.push([seq, bits & 31]);
+    c.inputs.push([seq, bits & 63]);
     if (c.inputs.length > MAX_QUEUED_INPUTS) c.inputs.shift();
   }
 

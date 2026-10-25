@@ -17,8 +17,13 @@ function arena(w, h, extra = [], tanks = []) {
 const tank = (id, x, y, a = 0) => ({ id, x, y, a, alive: true, weapon: null, charge: 0, shield: 0, fireHeld: false });
 const run = (st, n, inputs = {}) => { for (let i = 0; i < n; i++) G.step(st, inputs); };
 const press = (st, id) => { G.step(st, { [id]: { fire: true } }); G.step(st, {}); };
-const overlapsWall = (st, t) => st.walls.some(w => G.sat(G.tankPoly(t.x, t.y, t.a), G.rectPoly(w)));
-const arm = (t, type) => { t.weapon = { type, ammo: { gatling: C.GAT_AMMO, double: C.DOUBLE_AMMO, shotgun: C.SHOT_AMMO, mine: C.MINE_AMMO }[type] || 1, spin: 0, bomb: null }; };
+// (overlaps under 0.01 units come from rounding poses to their fine grid and are pushed out on the next move)
+const overlapsWall = (st, t) => st.walls.some(w => { const m = G.sat(G.tankPoly(t.x, t.y, t.a), G.rectPoly(w)); return m && Math.hypot(m.x, m.y) > 0.01; });
+const arm = (t, type) => {
+  t.weapon = { type, ammo: { gatling: C.GAT_AMMO, double: C.DOUBLE_AMMO, shotgun: C.SHOT_AMMO, mine: C.MINE_AMMO }[type] || 1,
+    spin: 0, bomb: null, bursts: type === 'gatling' ? C.GAT_BURSTS : 1, wait: false };
+};
+const started = m => { m.state.countdown = 0; return m; };
 
 test('bullet reflects off a vertical wall: angle in equals angle out', () => {
   const st = arena(10, 10);
@@ -57,10 +62,10 @@ test('bullet bounces off a wall end-cap and never passes through walls', () => {
   }
 });
 
-test('normal bullets: 5 per tank, last 20 seconds, kill the shooter too', () => {
+test('normal bullets: 7 per tank, last 20 seconds, kill the shooter too', () => {
   const st = arena(10, 10, [], [tank(1, 150, 150, 0), tank(2, 850, 850, 0)]);
-  for (let i = 0; i < 7; i++) press(st, 1);
-  assert.equal(st.projectiles.filter(p => p.owner === 1).length, 5);
+  for (let i = 0; i < 9; i++) press(st, 1);
+  assert.equal(st.projectiles.filter(p => p.owner === 1).length, 7);
   const life = st.projectiles[0].life;
   assert.equal(life, 20 * 60);
   const solo = arena(3, 1, [], [tank(1, 150, 50, 0)]);
@@ -84,9 +89,9 @@ test('bullets expire after their lifetime and leave a puff of smoke', () => {
   assert.equal(st.fx.length, 0, 'smoke events are dropped after a moment');
 });
 
-test('minigun bullets last 5 seconds; shotgun pellets vanish without smoke', () => {
+test('minigun pellets last 5 seconds; minigun and shotgun pellets vanish without smoke', () => {
   const st = arena(10, 10, [], [tank(1, 150, 500, 0)]);
-  G.shoot(st, st.tanks[0], 'gat', 0, 0, C.GAT_SPEED, C.GAT_R, C.GAT_LIFE);
+  G.shoot(st, st.tanks[0], 'gat', 0, 0, C.GAT_SPEED, C.PELLET_R, C.GAT_LIFE);
   G.shoot(st, st.tanks[0], 'pellet', 0.5, 0, C.BULLET_SPEED, C.PELLET_R, 30);
   st.tanks[0].x = -1000;
   run(st, 31);
@@ -96,7 +101,7 @@ test('minigun bullets last 5 seconds; shotgun pellets vanish without smoke', () 
   assert.equal(st.projectiles.length, 1);
   run(st, 1);
   assert.equal(st.projectiles.length, 0, 'gone after exactly 5 s');
-  assert.equal(st.fx.length, 1);
+  assert.equal(st.fx.length, 0);
 });
 
 test('fast wall lookup gives the same hits as checking every wall', () => {
@@ -139,7 +144,7 @@ test('movement is linear: constant speed, instant stop, constant turn rate', () 
   G.step(st, {});
   assert.ok(Math.abs(t.x - (150 + C.TANK_SPEED / 60)) < 1e-9, 'stops instantly');
   G.step(st, { 1: { right: true } });
-  assert.ok(Math.abs(t.a - C.TANK_TURN / 60) < 1e-9);
+  assert.ok(Math.abs(t.a - C.TANK_TURN / 60) < 1e-3);
 });
 
 test('tanks block each other', () => {
@@ -182,19 +187,72 @@ test('maze: irregular outline, every cell reachable, has loops, closed by walls,
   assert.ok(holes > 10, 'most mazes have an irregular outline');
 });
 
-test('maze size varies a lot and is large on average', () => {
-  const areas = [];
-  for (let seed = 1; seed < 200; seed++) { const m = G.newRound(seed, [{ id: 1 }, { id: 2 }]).maze; areas.push(m.w * m.h); }
-  const avg = areas.reduce((a, b) => a + b) / areas.length;
-  assert.ok(avg > 55, 'average area ' + avg);
-  assert.ok(Math.max(...areas) / Math.min(...areas) >= 4, 'range of sizes');
-  const big = G.newRound(1, [1, 2, 3, 4, 5, 6, 7, 8].map(id => ({ id }))).maze;
-  assert.ok(big.w * big.h >= 54, 'more players, bigger mazes');
+test('mazes are always landscape, from tiny to huge, from tight to wide open', () => {
+  const areas = [], open = [];
+  for (let seed = 1; seed < 300; seed++) {
+    const m = G.newRound(seed, [{ id: 1 }, { id: 2 }]).maze;
+    assert.ok(m.w > m.h, `landscape ${m.w}x${m.h}`);
+    areas.push(m.w * m.h);
+    let walls = 0, all = 0;
+    for (let y = 1; y < m.h; y++) for (let x = 0; x < m.w; x++) if (!G.isOff(m, x, y - 1) && !G.isOff(m, x, y)) { all++; walls += m.hw[y][x]; }
+    for (let y = 0; y < m.h; y++) for (let x = 1; x < m.w; x++) if (!G.isOff(m, x - 1, y) && !G.isOff(m, x, y)) { all++; walls += m.vw[y][x]; }
+    open.push(1 - walls / all);
+  }
+  assert.ok(Math.min(...areas) <= 8, 'some are tiny: ' + Math.min(...areas));
+  assert.ok(Math.max(...areas) >= 150, 'some are huge: ' + Math.max(...areas));
+  assert.ok(Math.min(...open) < 0.6 && Math.max(...open) > 0.75, `tight and open: ${Math.min(...open)} - ${Math.max(...open)}`);
+  assert.ok(Math.max(...open) < 0.97, 'even open arenas keep some walls');
+  for (let seed = 1; seed < 50; seed++) {
+    const m = G.newRound(seed, [1, 2, 3, 4, 5, 6, 7, 8].map(id => ({ id }))).maze;
+    assert.ok(m.w > m.h && m.w * m.h >= 24, 'room for 8 players');
+  }
+});
+
+test('floor shading is random with dark cells grouped together, not a checkerboard', () => {
+  let same = 0, pairs = 0, dark = 0, cells = 0;
+  for (let seed = 1; seed < 40; seed++) {
+    const m = G.newRound(seed, [{ id: 1 }, { id: 2 }]).maze;
+    for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
+      const v = m.shade[y * m.w + x];
+      cells++; dark += v;
+      if (x + 1 < m.w) { pairs++; same += v === m.shade[y * m.w + x + 1]; }
+      if (y + 1 < m.h) { pairs++; same += v === m.shade[(y + 1) * m.w + x]; }
+    }
+  }
+  assert.ok(same / pairs > 0.65, 'neighbours usually match (a checkerboard never does): ' + same / pairs);
+  assert.ok(dark / cells > 0.2 && dark / cells < 0.8, 'a mix of both shades');
+});
+
+test('each round starts with a 3 second countdown: nothing moves or fires until it ends', () => {
+  const m = new G.Match(9);
+  m.addPlayer(1, {}); m.addPlayer(2, {});
+  const t = m.state.tanks[0], x = t.x, a = t.a;
+  m.player(1).input = { up: true, right: true, fire: true };
+  for (let i = 0; i < C.COUNTDOWN; i++) m.step();
+  assert.equal(m.state.countdown, 0);
+  assert.deepEqual([t.x, t.a, m.state.projectiles.length], [x, a, 0]);
+  m.player(1).input = { right: true };
+  m.step();
+  assert.notEqual(t.a, a, 'moves once the countdown is over');
+});
+
+test('online inputs: held back until the sender\'s countdown is over', () => {
+  const st = arena(10, 10, [], [tank(1, 500, 500, 0)]);
+  st.countdown = 20; // a laggy client's countdown can end slightly after the server's
+  G.control(st, st.tanks[0], { up: true, go: false });
+  assert.equal(st.tanks[0].x, 500);
+  G.control(st, st.tanks[0], { up: true, go: true });
+  assert.ok(st.tanks[0].x > 500);
+  const x = st.tanks[0].x;
+  st.countdown = 100; // claiming 'go' far too early is ignored
+  G.control(st, st.tanks[0], { up: true, go: true });
+  assert.equal(st.tanks[0].x, x);
 });
 
 test('round end: last tank standing wins after the delay', () => {
   const m = new G.Match(5);
   m.addPlayer(1, {}); m.addPlayer(2, {});
+  started(m);
   assert.equal(m.round, 1);
   G.kill(m.state, m.state.tanks[1], 1);
   m.step();
@@ -209,6 +267,7 @@ test('round end: last tank standing wins after the delay', () => {
 test('round end: a tank killed during the delay makes it a draw', () => {
   const m = new G.Match(6);
   m.addPlayer(1, {}); m.addPlayer(2, {});
+  started(m);
   G.kill(m.state, m.state.tanks[1], 1);
   m.step();
   for (let i = 0; i < 30; i++) m.step();
@@ -223,6 +282,7 @@ test('mid-round joiners spectate until the next round', () => {
   const m = new G.Match(7);
   m.addPlayer(1, {}); m.addPlayer(2, {});
   m.addPlayer(3, {});
+  started(m);
   assert.equal(m.inRound(3), false);
   G.kill(m.state, m.state.tanks[1], 1);
   for (let i = 0; i <= C.END_DELAY; i++) m.step();
@@ -242,13 +302,21 @@ test('crates spawn in free cells; driving over collects; holding a weapon blocks
   assert.equal(st.crates.length, 1, 'second crate stays while a weapon is held');
 });
 
-test('gatling: spins up for a second, then fires a stream while held', () => {
+test('minigun: spins up, then two long bursts of the smallest pellets (release between bursts)', () => {
   const st = arena(10, 10, [], [tank(1, 150, 500, 0)]);
+  st.tanks[0].shield = 1e6; // so its own pellets can't end the test early
   arm(st.tanks[0], 'gatling');
   run(st, C.GAT_SPIN - 1, { 1: { fire: true } });
   assert.equal(st.projectiles.length, 0);
-  run(st, C.GAT_EVERY * C.GAT_AMMO, { 1: { fire: true } });
-  assert.equal(st.projectiles.filter(p => p.type === 'gat').length, C.GAT_AMMO);
+  run(st, C.GAT_EVERY * C.GAT_AMMO + 30, { 1: { fire: true } });
+  const gats = st.projectiles.filter(p => p.type === 'gat');
+  assert.equal(gats.length, C.GAT_AMMO, 'first burst, then it stops while fire is still held');
+  assert.ok(gats.every(p => p.r === C.PELLET_R), 'smallest pellets');
+  assert.equal(st.tanks[0].weapon.type, 'gatling', 'second burst left');
+  G.step(st, {}); // release
+  const before = st.nextId;
+  run(st, C.GAT_SPIN + C.GAT_EVERY * C.GAT_AMMO, { 1: { fire: true } });
+  assert.equal(st.nextId - before, C.GAT_AMMO, 'second burst');
   assert.equal(st.tanks[0].weapon, null);
 });
 
@@ -284,6 +352,22 @@ test('homing missile: bounces first, then follows the maze to the nearest tank',
   while (st.tanks[1].alive && t++ < C.MISSILE_LIFE) G.step(st, {});
   assert.equal(st.tanks[1].alive, false, 'missile found the target');
   assert.ok(t > C.MISSILE_SEEK);
+});
+
+test('homing missile: keeps its lock unless another tank stays much closer for a while', () => {
+  const st = arena(20, 5, [], [tank(1, -5000, 250, 0), tank(2, 1900, 250, 0), tank(3, -5000, 50, 0)]);
+  const m = { id: 99, type: 'missile', owner: 1, x: 300, y: 250, vx: C.MISSILE_SPEED, vy: 0, r: C.MISSILE_R, life: 1e6,
+    age: C.MISSILE_SEEK, bounces: 0, target: null, rival: 0 };
+  st.projectiles.push(m);
+  G.step(st, {});
+  assert.equal(m.target, 2, 'locks on to the closest tank');
+  const near = n => { for (let i = 0; i < n; i++) { Object.assign(st.tanks[2], { x: m.x, y: m.y - 90 }); G.step(st, {}); } };
+  near(C.MISSILE_SWITCH - 20);
+  assert.equal(m.target, 2, 'a brief pass does not steal the lock');
+  st.tanks[2].x = -5000;
+  run(st, 5);
+  near(C.MISSILE_SWITCH + 5);
+  assert.equal(m.target, 3, 'staying close for a while does');
 });
 
 test('death ray: stops at white space (a hole in the maze)', () => {
@@ -394,7 +478,19 @@ test('shield: deflects incoming bullets for six seconds', () => {
   assert.equal(st.tanks[1].shield, 0);
 });
 
-test('input encoding round-trips', () => {
-  const i = { up: true, down: false, left: true, right: false, fire: true };
+test('shield: nothing can hit a shielded tank, even its own shot coming straight back', () => {
+  const st = arena(3, 1, [], [tank(1, 225, 50, 0)]); // nose close to the right wall
+  st.tanks[0].shield = C.SHIELD_TIME;
+  press(st, 1);
+  run(st, 60);
+  assert.equal(st.tanks[0].alive, true);
+  st.projectiles.push({ id: 900, type: 'bullet', owner: 1, x: 100, y: 50, vx: 0, vy: 0, r: 4, life: 1e5, age: 0, bounces: 0 });
+  run(st, 60, { 1: { down: true } }); // back into a bullet sitting still
+  assert.equal(st.tanks[0].alive, true);
+});
+
+test('input encoding round-trips, including the countdown flag', () => {
+  const i = { go: true, up: true, down: false, left: true, right: false, fire: true };
   assert.deepEqual(G.decodeInput(G.encodeInput(i)), i);
+  assert.equal(G.decodeInput(G.encodeInput({ go: false })).go, false);
 });

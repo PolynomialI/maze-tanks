@@ -6,7 +6,7 @@
   // Both classic layouts work: arrows + M, or E/S/D/F + Q. Space also fires.
   const BIND = { up: ['ArrowUp', 'KeyE'], down: ['ArrowDown', 'KeyD'], left: ['ArrowLeft', 'KeyS'], right: ['ArrowRight', 'KeyF'], fire: ['KeyM', 'KeyQ', 'Space'] };
   const ALLKEYS = new Set(Object.values(BIND).flat());
-  const INTERP = 6; // others are drawn 6 updates (100 ms) behind the newest snapshot
+  const INTERP = 8; // others are drawn 8 updates (133 ms) behind the newest snapshot, smoothing out network jitter
 
   let look = null;
   try { const s = JSON.parse(localStorage.getItem(STORE)); if (s) look = G.cleanLook(s); } catch (e) { /* storage unavailable */ }
@@ -21,7 +21,8 @@
   let ws = null, me = null, screen = 'connect', retry = 0;
   let players = [], waiting = false, maze = null, walls = null, roundNo = 0;
   let snaps = [], renderK = 0, world = null;
-  let seq = 0, pending = [], pred = null, predPrev = null;
+  let seq = 0, pending = [], pred = null, predPrev = null, cdLeft = 0;
+  let fix = { x: 0, y: 0, a: 0 }; // small server corrections, faded out instead of snapped
   const held = new Set(), tapped = new Set();
   let acc = 0, lastT = performance.now();
 
@@ -90,7 +91,7 @@
       case 'lobby': resetGame(); show('game'); break;
       case 'home': resetGame(); show('home'); break;
       case 'r':
-        maze = m.maze; walls = G.buildWalls(maze); roundNo = m.n;
+        maze = m.maze; walls = G.buildWalls(maze); roundNo = m.n; cdLeft = m.cd;
         snaps = []; pending = []; pred = predPrev = null;
         break;
       case 'pl': players = m.p; waiting = !!m.w; updateCorner(); break;
@@ -113,20 +114,26 @@
     world = { walls, tanks: s.T.filter(t => t[0] !== me && t[4]).map(t => ({ id: t[0], x: t[1], y: t[2], a: t[3], alive: true })) };
     const t = { id: me, x: mine[1], y: mine[2], a: mine[3], alive: true, charge: mine[6] };
     world.tanks.push(t);
-    for (const [, inp] of pending) G.moveTank(world, t, inp);
+    for (const [, inp] of pending) if (inp.go) G.moveTank(world, t, inp);
     if (!pred) predPrev = { x: t.x, y: t.y, a: t.a };
+    else {
+      const ex = pred.x - t.x, ey = pred.y - t.y, ea = G.wrap(pred.a - t.a);
+      if (Math.hypot(ex, ey) < 40) { fix.x += ex; fix.y += ey; fix.a += ea; } else fix = { x: 0, y: 0, a: 0 };
+      predPrev = { x: predPrev.x - ex, y: predPrev.y - ey, a: predPrev.a - ea };
+    }
     pred = t;
   }
 
   function localTick() {
-    const inp = {};
+    const inp = { go: cdLeft <= 0 };
     for (const k of G.KEYS) inp[k] = BIND[k].some(c => held.has(c) || tapped.has(c));
     tapped.clear();
+    if (cdLeft > 0) cdLeft--;
     seq++;
     send({ t: 'i', q: seq, k: G.encodeInput(inp) });
     pending.push([seq, inp]);
     if (pending.length > 120) pending.shift();
-    if (pred) { predPrev = { x: pred.x, y: pred.y, a: pred.a }; G.moveTank(world, pred, inp); }
+    if (pred && inp.go) { predPrev = { x: pred.x, y: pred.y, a: pred.a }; G.moveTank(world, pred, inp); }
     renderK++;
   }
 
@@ -152,7 +159,8 @@
       const t = { ...tankOf(mineRow), look: looks[me] };
       if (pred) {
         const p0 = predPrev || pred;
-        t.x = p0.x + (pred.x - p0.x) * alpha; t.y = p0.y + (pred.y - p0.y) * alpha; t.a = p0.a + G.wrap(pred.a - p0.a) * alpha;
+        t.x = p0.x + (pred.x - p0.x) * alpha + fix.x; t.y = p0.y + (pred.y - p0.y) * alpha + fix.y;
+        t.a = p0.a + G.wrap(pred.a - p0.a) * alpha + fix.a;
       }
       tanks.push(t);
     }
@@ -180,7 +188,10 @@
       for (let n = 0; acc >= C.DT && n < 8; n++) { localTick(); acc -= C.DT; }
       acc = Math.min(acc, C.DT);
     }
+    const fade = Math.pow(1e-13, dt); // corrections fade out within about 100 ms
+    fix.x *= fade; fix.y *= fade; fix.a *= fade;
     scene.draw(screen === 'game' ? view(acc / C.DT) : null, t);
+    U.countdown($('#game'), $('#count'), screen === 'game' && maze ? cdLeft : 0);
     bar.update(screen === 'game' ? players : [{ id: me, look, wins: 0, kills: 0 }], me);
     requestAnimationFrame(frame);
   }
@@ -194,7 +205,7 @@
   addEventListener('keyup', e => held.delete(e.code));
   addEventListener('blur', () => held.clear());
 
-  window.mazeTanksOnline = { scene, get screen() { return screen; }, get me() { return me; }, get players() { return players; }, get pred() { return pred; }, get snaps() { return snaps; } };
+  window.mazeTanksOnline = { scene, get cd() { return cdLeft; }, get screen() { return screen; }, get me() { return me; }, get players() { return players; }, get pred() { return pred; }, get snaps() { return snaps; } };
   show('connect');
   connect();
   requestAnimationFrame(frame);
