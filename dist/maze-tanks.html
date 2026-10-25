@@ -1,0 +1,1251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Maze Tanks</title>
+<style>/* Flat look: light grey checkered floor, mid-grey walls, white surround. No gradients, shadows or glow. */
+:root { --bg: #ffffff; --ink: #1f1f1f; --wall: #6b6b6b; --paper: #ffffff; --soft: #eeeeee; --line: #d0d0d0; --focus: #3d8fe0; color-scheme: light; }
+html, body { height: 100%; margin: 0; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--ink); font: 700 16px/1 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; user-select: none; -webkit-user-select: none; }
+#app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+#game { flex: 1; width: 100%; min-height: 0; display: block; }
+#bar { flex: none; height: 52px; display: flex; gap: 26px; align-items: center; justify-content: center; background: var(--paper); border-top: 2px solid var(--wall); padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px)); overflow-x: auto; }
+.pl { display: flex; align-items: center; gap: 8px; padding-bottom: 3px; border-bottom: 3px solid transparent; }
+.pl.me { border-bottom-color: var(--ink); }
+.pl.out { opacity: .4; }
+.st { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; min-width: 34px; }
+.st svg { width: 18px; height: 18px; color: var(--wall); }
+#overlay { position: fixed; inset: 0 0 52px 0; display: grid; place-items: center; background: rgba(255, 255, 255, .88); padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px)); overflow: auto; }
+#overlay.clear { background: transparent; pointer-events: none; }
+#overlay.clear > * { pointer-events: auto; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center; }
+.col { display: flex; flex-direction: column; gap: 14px; align-items: center; }
+.btn { appearance: none; border: 2px solid var(--wall); background: var(--paper); color: var(--ink); border-radius: 12px; width: 56px; height: 56px; padding: 0; display: grid; place-items: center; cursor: pointer; }
+.btn svg { width: 28px; height: 28px; }
+.btn:hover { background: var(--soft); }
+.btn.dark { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.btn.big { width: 96px; height: 96px; border-radius: 50%; }
+.btn.big svg { width: 48px; height: 48px; }
+.btn.small { width: 40px; height: 40px; border-radius: 10px; }
+.btn.small svg { width: 20px; height: 20px; }
+button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.card { background: var(--paper); border: 2px solid var(--wall); border-radius: 16px; padding: 18px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.card canvas { cursor: pointer; }
+.panel { background: var(--paper); border: 2px solid var(--wall); border-radius: 16px; padding: 18px; display: flex; flex-wrap: wrap; gap: 18px; align-items: center; justify-content: center; max-width: 760px; }
+.garage .opts { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.garage .row { justify-content: flex-start; gap: 7px; }
+.garage .part { margin-right: 6px; }
+.swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(0, 0, 0, .25); padding: 0; cursor: pointer; }
+.swatch.on { outline: 3px solid var(--ink); outline-offset: 2px; }
+.choice { border: 2px solid var(--line); background: var(--paper); border-radius: 10px; padding: 3px; cursor: pointer; line-height: 0; }
+.choice.on { border-color: var(--ink); }
+.keys .row { justify-content: flex-start; }
+.keys .row svg { width: 26px; height: 26px; }
+.key { min-width: 64px; height: 40px; border: 2px solid var(--wall); background: var(--paper); border-radius: 8px; font: inherit; color: var(--ink); cursor: pointer; }
+.key.wait { background: var(--ink); color: var(--paper); }
+.spin { width: 52px; height: 52px; border: 6px solid var(--line); border-top-color: var(--ink); border-radius: 50%; animation: spin .9s linear infinite; }
+.corner { position: fixed; top: max(12px, env(safe-area-inset-top, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); display: flex; gap: 8px; align-items: center; }
+.corner svg { width: 26px; height: 26px; }
+.spin.small { width: 22px; height: 22px; border-width: 4px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
+</style>
+</head>
+<body>
+<div id="app"><canvas id="game"></canvas><div id="bar"></div></div>
+<div id="overlay"></div>
+<script>/* Maze Tanks: shared game logic for the local page, the online client and the server.
+ * Pure simulation, no drawing. Fixed 60 updates per second; units are maze pixels (one cell = 100). */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.Game = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  const TICK = 60;
+  const C = {
+    TICK, DT: 1 / TICK,
+    CELL: 100, WALL: 4,                          // wall half-thickness
+    TANK_L: 40, TANK_W: 32, MUZZLE: 30,
+    TANK_SPEED: 150, TANK_BACK: 105, TANK_TURN: 3.6,
+    BULLET_R: 4, BULLET_SPEED: 210, BULLET_LIFE: 10 * TICK, MAX_BULLETS: 5,
+    END_DELAY: 3 * TICK,
+    CRATE_R: 13, CRATE_MAX: 3, CRATE_MIN_T: 3 * TICK, CRATE_MAX_T: 8 * TICK,
+    GAT_AMMO: 25, GAT_SPIN: TICK, GAT_EVERY: 4, GAT_SPEED: 240, GAT_R: 2, GAT_LIFE: 5 * TICK, GAT_SPREAD: 0.12,
+    LASER_SPEED: 1500, LASER_LIFE: 48, LASER_R: 1.5, AIM_LEN: 600,
+    MISSILE_SPEED: 180, MISSILE_R: 5, MISSILE_LIFE: 12 * TICK, MISSILE_SEEK: 150, MISSILE_TURN: 3.5,
+    RAY_CHARGE: 2 * TICK, RAY_LIFE: 36, RAY_KILL: 12, RAY_W: 6,
+    FRAG_SPEED: 170, FRAG_R: 6, FRAG_FUSE: 10 * TICK, FRAG_SHARDS: 24, SHARD_SPEED: 320, SHARD_LIFE: 27, SHARD_R: 2,
+    DOUBLE_AMMO: 5, DOUBLE_GAP: 7,
+    SHOT_AMMO: 3, SHOT_PELLETS: 14, SHOT_SPREAD: 0.4, SHOT_LIFE: 150, PELLET_R: 2,
+    MINE_AMMO: 3, MINE_ARM: 2 * TICK, MINE_R: 9, MINE_SHARDS: 16, MINE_SHARD_SPEED: 260, MINE_SHARD_LIFE: 21,
+    SHIELD_TIME: 6 * TICK, SHIELD_R: 36,
+    STEP: 5                                      // longest projectile sub-step
+  };
+  const POWERUPS = ['gatling', 'laser', 'missile', 'deathray', 'frag', 'double', 'shotgun', 'mine', 'shield'];
+  const AMMO = { gatling: C.GAT_AMMO, double: C.DOUBLE_AMMO, shotgun: C.SHOT_AMMO, mine: C.MINE_AMMO };
+  const COLORS = ['#e2493b', '#f08c24', '#f2c230', '#8cc63f', '#2e9e4f', '#26a69a', '#3d8fe0', '#2f55b8', '#8e5cc7', '#e46aa7', '#8a6a52', '#4f5359'];
+  const LOOK = { colors: COLORS.length, barrels: 4, accessories: 5 };
+  const NOINPUT = {};
+
+  // ---------- random ----------
+  function rnd(s) {
+    let t = (s.seed = (s.seed + 0x6D2B79F5) | 0);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  function rint(s, a, b) { return a + Math.floor(rnd(s) * (b - a + 1)); }
+  function wrap(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a <= -Math.PI) a += 2 * Math.PI; return a; }
+
+  // ---------- maze ----------
+  // hw[y][x]: wall on the top edge of cell (x,y), y = 0..h. vw[y][x]: wall on the left edge, x = 0..w.
+  // off[c] = 1 marks a hole: a cell cut out of the maze (drawn as white space).
+  const isOff = (m, x, y) => x < 0 || y < 0 || x >= m.w || y >= m.h || (m.off ? m.off[y * m.w + x] === 1 : false);
+
+  // Cut 1-3 random rectangles out of the grid and keep the largest connected part (at least 60% of cells).
+  function carveHoles(w, h, s) {
+    for (let tries = 0; tries < 30; tries++) {
+      const off = new Array(w * h).fill(0);
+      for (let k = rint(s, 1, 3); k > 0; k--) {
+        const rw = rint(s, 1, Math.max(1, w >> 1)), rh = rint(s, 1, Math.max(1, h >> 1));
+        const x0 = rint(s, 0, w - rw), y0 = rint(s, 0, h - rh);
+        for (let y = y0; y < y0 + rh; y++) for (let x = x0; x < x0 + rw; x++) off[y * w + x] = 1;
+      }
+      let best = [];
+      const seen = new Uint8Array(w * h);
+      for (let c0 = 0; c0 < w * h; c0++) {
+        if (off[c0] || seen[c0]) continue;
+        const comp = [c0];
+        seen[c0] = 1;
+        for (let i = 0; i < comp.length; i++) {
+          const c = comp[i], x = c % w;
+          for (const n of [x > 0 ? c - 1 : -1, x < w - 1 ? c + 1 : -1, c - w, c + w])
+            if (n >= 0 && n < w * h && !off[n] && !seen[n]) { seen[n] = 1; comp.push(n); }
+        }
+        if (comp.length > best.length) best = comp;
+      }
+      // neighbouring cell pairs; a thin snake-like shape would leave no room for loops
+      const inBest = new Set(best);
+      const pairs = best.reduce((n, c) => n + (c % w < w - 1 && inBest.has(c + 1)) + inBest.has(c + w), 0);
+      if (best.length >= 0.6 * w * h && pairs >= best.length + 2) {
+        off.fill(1);
+        for (const c of best) off[c] = 0;
+        return off;
+      }
+    }
+    return new Array(w * h).fill(0);
+  }
+
+  function makeMaze(w, h, s, loops = 0.12, holes = true) {
+    const off = holes ? carveHoles(w, h, s) : new Array(w * h).fill(0);
+    const hw = [], vw = [];
+    for (let y = 0; y <= h; y++) hw.push(new Array(w).fill(1));
+    for (let y = 0; y < h; y++) vw.push(new Array(w + 1).fill(1));
+    const seen = Uint8Array.from(off);
+    const active = off.map((o, c) => (o ? -1 : c)).filter(c => c >= 0);
+    const stack = [active[rint(s, 0, active.length - 1)]];
+    seen[stack[0]] = 1;
+    while (stack.length) {
+      const c = stack[stack.length - 1], x = c % w, y = (c / w) | 0, opts = [];
+      if (x > 0 && !seen[c - 1]) opts.push(c - 1);
+      if (x < w - 1 && !seen[c + 1]) opts.push(c + 1);
+      if (y > 0 && !seen[c - w]) opts.push(c - w);
+      if (y < h - 1 && !seen[c + w]) opts.push(c + w);
+      if (!opts.length) { stack.pop(); continue; }
+      const n = opts[Math.floor(rnd(s) * opts.length)];
+      const nx = n % w, ny = (n / w) | 0;
+      if (ny === y) vw[y][Math.max(x, nx)] = 0; else hw[Math.max(y, ny)][x] = 0;
+      seen[n] = 1;
+      stack.push(n);
+    }
+    const m = { w, h, hw, vw, off };
+    // no walls between two holes (or a hole and the outside)
+    for (let y = 0; y <= h; y++) for (let x = 0; x < w; x++) if (isOff(m, x, y - 1) && isOff(m, x, y)) hw[y][x] = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x <= w; x++) if (isOff(m, x - 1, y) && isOff(m, x, y)) vw[y][x] = 0;
+    // knock out a few extra interior walls so the maze has loops
+    const inner = [];
+    for (let y = 1; y < h; y++) for (let x = 0; x < w; x++) if (hw[y][x] && !isOff(m, x, y - 1) && !isOff(m, x, y)) inner.push([hw, x, y]);
+    for (let y = 0; y < h; y++) for (let x = 1; x < w; x++) if (vw[y][x] && !isOff(m, x - 1, y) && !isOff(m, x, y)) inner.push([vw, x, y]);
+    for (let n = Math.round(active.length * loops); n > 0 && inner.length; n--) {
+      const [g, x, y] = inner.splice(Math.floor(rnd(s) * inner.length), 1)[0];
+      g[y][x] = 0;
+    }
+    return m;
+  }
+
+  // Wall rectangles (collinear runs merged so there are no seams).
+  function buildWalls(m) {
+    const S = C.CELL, T = C.WALL, out = [];
+    for (let y = 0; y <= m.h; y++) for (let x = 0; x < m.w;) {
+      if (!m.hw[y][x]) { x++; continue; }
+      let e = x; while (e < m.w && m.hw[y][e]) e++;
+      out.push({ x1: x * S - T, y1: y * S - T, x2: e * S + T, y2: y * S + T });
+      x = e;
+    }
+    for (let x = 0; x <= m.w; x++) for (let y = 0; y < m.h;) {
+      if (!m.vw[y][x]) { y++; continue; }
+      let e = y; while (e < m.h && m.vw[e][x]) e++;
+      out.push({ x1: x * S - T, y1: y * S - T, x2: x * S + T, y2: e * S + T });
+      y = e;
+    }
+    return out;
+  }
+
+  // ---------- geometry ----------
+  function tankPoly(x, y, a) {
+    const c = Math.cos(a), s = Math.sin(a), l = C.TANK_L / 2, w = C.TANK_W / 2;
+    return [[x + c * l - s * w, y + s * l + c * w], [x + c * l + s * w, y + s * l - c * w],
+      [x - c * l + s * w, y - s * l - c * w], [x - c * l - s * w, y - s * l + c * w]];
+  }
+  function rectPoly(r) { return [[r.x1, r.y1], [r.x2, r.y1], [r.x2, r.y2], [r.x1, r.y2]]; }
+
+  // Separating-axis test for two rectangles; returns the push that moves pa out of pb, or null.
+  function sat(pa, pb) {
+    let best = Infinity, bx = 0, by = 0;
+    const cax = (pa[0][0] + pa[2][0]) / 2, cay = (pa[0][1] + pa[2][1]) / 2;
+    const cbx = (pb[0][0] + pb[2][0]) / 2, cby = (pb[0][1] + pb[2][1]) / 2;
+    for (const poly of [pa, pb]) for (let i = 0; i < 2; i++) {
+      let nx = poly[i][1] - poly[i + 1][1], ny = poly[i + 1][0] - poly[i][0];
+      const len = Math.hypot(nx, ny); nx /= len; ny /= len;
+      let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+      for (const v of pa) { const d = v[0] * nx + v[1] * ny; if (d < a0) a0 = d; if (d > a1) a1 = d; }
+      for (const v of pb) { const d = v[0] * nx + v[1] * ny; if (d < b0) b0 = d; if (d > b1) b1 = d; }
+      const o = Math.min(a1, b1) - Math.max(a0, b0);
+      if (o <= 0) return null;
+      if (o < best) {
+        best = o;
+        const dir = (cax - cbx) * nx + (cay - cby) * ny < 0 ? -1 : 1;
+        bx = nx * dir; by = ny * dir;
+      }
+    }
+    return { x: bx * best, y: by * best };
+  }
+
+  function hitsTank(t, x, y, r) {
+    const c = Math.cos(t.a), s = Math.sin(t.a), dx = x - t.x, dy = y - t.y;
+    const lx = dx * c + dy * s, ly = -dx * s + dy * c;
+    const qx = Math.max(-C.TANK_L / 2, Math.min(C.TANK_L / 2, lx));
+    const qy = Math.max(-C.TANK_W / 2, Math.min(C.TANK_W / 2, ly));
+    return (lx - qx) ** 2 + (ly - qy) ** 2 < r * r;
+  }
+
+  // First wall hit by a circle of radius r moving from (x,y) by (dx,dy). t is the fraction travelled.
+  function castRay(walls, x, y, dx, dy, r) {
+    let bt = Infinity, bnx = 0, bny = 0;
+    for (const w of walls) {
+      const x1 = w.x1 - r, x2 = w.x2 + r, y1 = w.y1 - r, y2 = w.y2 + r;
+      let tx0 = -Infinity, tx1 = Infinity, ty0 = -Infinity, ty1 = Infinity;
+      if (dx) { const a = (x1 - x) / dx, b = (x2 - x) / dx; tx0 = Math.min(a, b); tx1 = Math.max(a, b); }
+      else if (x <= x1 || x >= x2) continue;
+      if (dy) { const a = (y1 - y) / dy, b = (y2 - y) / dy; ty0 = Math.min(a, b); ty1 = Math.max(a, b); }
+      else if (y <= y1 || y >= y2) continue;
+      const t0 = Math.max(tx0, ty0), t1 = Math.min(tx1, ty1);
+      if (t1 <= t0 || t0 < 0 || t0 > 1 || t0 >= bt) continue;
+      bt = t0;
+      bnx = tx0 >= ty0 - 1e-9 ? -Math.sign(dx) : 0;
+      bny = ty0 >= tx0 - 1e-9 ? -Math.sign(dy) : 0;
+    }
+    return bt === Infinity ? null : { t: bt, nx: bnx, ny: bny };
+  }
+
+  // Move a projectile along its velocity by dist, bouncing off walls (shards stop at walls).
+  function travel(state, p, dist) {
+    const sp = Math.hypot(p.vx, p.vy);
+    if (!sp) return;
+    for (let i = 0; i < 12 && dist > 1e-6; i++) {
+      const dx = p.vx / sp * dist, dy = p.vy / sp * dist;
+      const h = castRay(state.walls, p.x, p.y, dx, dy, p.r);
+      if (!h) { p.x += dx; p.y += dy; return; }
+      p.x += dx * h.t + h.nx * 1e-3; p.y += dy * h.t + h.ny * 1e-3;
+      dist -= dist * h.t;
+      if (p.type === 'shard') { p.dead = true; return; }
+      if (h.nx) p.vx = -p.vx;
+      if (h.ny) p.vy = -p.vy;
+      p.bounces++;
+      if (p.path) p.path.push([p.x, p.y]);
+    }
+  }
+
+  // Bouncing path of a laser from (x,y) at angle a, used for the aiming line.
+  function tracePath(state, x, y, a, len) {
+    const p = { type: 'aim', x, y, vx: Math.cos(a), vy: Math.sin(a), r: C.LASER_R, bounces: 0, path: [[x, y]] };
+    travel(state, p, len);
+    p.path.push([p.x, p.y]);
+    return p.path;
+  }
+
+  // ---------- tanks ----------
+  // Try a pose; small overlaps are pushed out (so tanks slide along walls), anything bigger is refused.
+  function placeTank(state, tank, x, y, a) {
+    const ox = x, oy = y, R = 26 + C.WALL;
+    for (let it = 0; it < 6; it++) {
+      const poly = tankPoly(x, y, a);
+      let push = null;
+      for (const w of state.walls) {
+        if (x + R < w.x1 || x - R > w.x2 || y + R < w.y1 || y - R > w.y2) continue;
+        if ((push = sat(poly, rectPoly(w)))) break;
+      }
+      if (!push) for (const o of state.tanks) {
+        if (o === tank || !o.alive || Math.abs(o.x - x) > 52 || Math.abs(o.y - y) > 52) continue;
+        if ((push = sat(poly, tankPoly(o.x, o.y, o.a)))) break;
+      }
+      if (!push) return Math.hypot(x - ox, y - oy) <= 4 ? [x, y] : null;
+      x += push.x; y += push.y;
+    }
+    return null;
+  }
+
+  function moveTank(state, t, inp) {
+    if (!t.alive || t.charge > 0) return;
+    const turn = (inp.right ? 1 : 0) - (inp.left ? 1 : 0);
+    if (turn) {
+      const a = wrap(t.a + turn * C.TANK_TURN * C.DT);
+      const p = placeTank(state, t, t.x, t.y, a);
+      if (p) { t.x = p[0]; t.y = p[1]; t.a = a; }
+    }
+    const mv = (inp.up ? 1 : 0) - (inp.down ? 1 : 0);
+    if (mv) {
+      const d = (mv > 0 ? C.TANK_SPEED : -C.TANK_BACK) * C.DT;
+      const p = placeTank(state, t, t.x + Math.cos(t.a) * d, t.y + Math.sin(t.a) * d, t.a);
+      if (p) { t.x = p[0]; t.y = p[1]; }
+    }
+  }
+
+  function kill(state, t, by) {
+    if (!t.alive) return;
+    t.alive = false; t.weapon = null; t.charge = 0; t.shield = 0;
+    state.kills.push([by, t.id]);
+  }
+
+  // ---------- weapons ----------
+  // Projectiles start at the tank centre and travel out to the muzzle, so a barrel poking into a wall bounces the shot.
+  function shoot(state, t, type, ang, side, speed, r, life, extra) {
+    const a = t.a + ang;
+    const p = Object.assign({
+      id: state.nextId++, type, owner: t.id,
+      x: t.x - Math.sin(t.a) * side, y: t.y + Math.cos(t.a) * side,
+      vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, r, life, age: 0, bounces: 0
+    }, extra);
+    if (p.path) p.path = [[p.x, p.y]];
+    travel(state, p, C.MUZZLE);
+    state.projectiles.push(p);
+    return p;
+  }
+
+  function burst(state, x, y, owner, n, speed, life) {
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + rnd(state.rng) * 0.25, v = speed * (0.8 + 0.4 * rnd(state.rng));
+      state.projectiles.push({ id: state.nextId++, type: 'shard', owner, x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+        r: C.SHARD_R, life, age: 0, bounces: 0 });
+    }
+  }
+
+  function explodeFrag(state, p) {
+    p.dead = true;
+    burst(state, p.x, p.y, p.owner, C.FRAG_SHARDS, C.SHARD_SPEED, C.SHARD_LIFE);
+    const o = state.tanks.find(t => t.id === p.owner);
+    if (o && o.weapon && o.weapon.bomb === p.id) o.weapon = null;
+  }
+
+  function fireRay(state, t) {
+    const c = Math.cos(t.a), s = Math.sin(t.a), x1 = t.x + c * C.MUZZLE, y1 = t.y + s * C.MUZZLE;
+    // passes through walls but stops at white space (a hole or the edge of the maze)
+    const out = d => isOff(state.maze, Math.floor((x1 + c * d) / C.CELL), Math.floor((y1 + s * d) / C.CELL));
+    let d = 0;
+    if (!out(0)) while (d < 1e4 && !out(d + 2)) d += 2;
+    state.beams.push({ id: state.nextId++, owner: t.id, x1, y1, x2: x1 + c * d, y2: y1 + s * d, age: 0 });
+  }
+
+  function fire(state, t, inp) {
+    const press = !!inp.fire && !t.fireHeld;
+    t.fireHeld = !!inp.fire;
+    if (t.charge > 0) {
+      if (--t.charge === 0) { fireRay(state, t); t.weapon = null; }
+      return;
+    }
+    const w = t.weapon, rng = state.rng;
+    if (!w) {
+      if (press && state.projectiles.filter(p => p.owner === t.id && p.normal && !p.dead).length < C.MAX_BULLETS)
+        shoot(state, t, 'bullet', 0, 0, C.BULLET_SPEED, C.BULLET_R, C.BULLET_LIFE, { normal: true });
+      return;
+    }
+    switch (w.type) {
+      case 'gatling':
+        if (!inp.fire) { w.spin = 0; break; }
+        if (++w.spin >= C.GAT_SPIN && (w.spin - C.GAT_SPIN) % C.GAT_EVERY === 0) {
+          shoot(state, t, 'gat', (rnd(rng) * 2 - 1) * C.GAT_SPREAD, 0, C.GAT_SPEED, C.GAT_R, C.GAT_LIFE);
+          if (--w.ammo <= 0) t.weapon = null;
+        }
+        break;
+      case 'laser':
+        if (press) { shoot(state, t, 'laser', 0, 0, C.LASER_SPEED, C.LASER_R, C.LASER_LIFE, { path: [] }); t.weapon = null; }
+        break;
+      case 'missile':
+        if (press) { shoot(state, t, 'missile', 0, 0, C.MISSILE_SPEED, C.MISSILE_R, C.MISSILE_LIFE, { target: null }); t.weapon = null; }
+        break;
+      case 'deathray':
+        if (press) t.charge = C.RAY_CHARGE;
+        break;
+      case 'frag':
+        if (!press) break;
+        if (w.bomb == null) w.bomb = shoot(state, t, 'frag', 0, 0, C.FRAG_SPEED, C.FRAG_R, C.FRAG_FUSE).id;
+        else {
+          const b = state.projectiles.find(p => p.id === w.bomb && !p.dead);
+          if (b) explodeFrag(state, b);
+          t.weapon = null;
+        }
+        break;
+      case 'double':
+        if (!press) break;
+        for (const side of [-1, 1]) shoot(state, t, 'bullet', 0, side * C.DOUBLE_GAP, C.BULLET_SPEED, C.BULLET_R, C.BULLET_LIFE);
+        if (--w.ammo <= 0) t.weapon = null;
+        break;
+      case 'shotgun':
+        if (!press) break;
+        for (let i = 0; i < C.SHOT_PELLETS; i++)
+          shoot(state, t, 'pellet', (rnd(rng) * 2 - 1) * C.SHOT_SPREAD, 0, C.BULLET_SPEED * (1.1 + rnd(rng) * 0.5),
+            C.PELLET_R, C.SHOT_LIFE - rint(rng, 0, 30));
+        if (--w.ammo <= 0) t.weapon = null;
+        break;
+      case 'mine':
+        if (!press) break;
+        state.mines.push({ id: state.nextId++, owner: t.id, x: t.x, y: t.y, age: 0 });
+        if (--w.ammo <= 0) t.weapon = null;
+        break;
+    }
+  }
+
+  // ---------- missiles ----------
+  function cellOf(state, x, y) {
+    const m = state.maze;
+    const cx = Math.max(0, Math.min(m.w - 1, Math.floor(x / C.CELL))), cy = Math.max(0, Math.min(m.h - 1, Math.floor(y / C.CELL)));
+    return cy * m.w + cx;
+  }
+
+  // Cells on the shortest maze path from (x0,y0) to (x1,y1), excluding the start cell.
+  function pathCells(state, x0, y0, x1, y1) {
+    const m = state.maze, w = m.w, s = cellOf(state, x0, y0), g = cellOf(state, x1, y1);
+    const prev = new Int32Array(w * m.h).fill(-1), q = [s];
+    prev[s] = s;
+    for (let i = 0; i < q.length && prev[g] < 0; i++) {
+      const c = q[i], x = c % w, y = (c / w) | 0;
+      const go = n => { if (prev[n] < 0) { prev[n] = c; q.push(n); } };
+      if (x < w - 1 && !m.vw[y][x + 1]) go(c + 1);
+      if (x > 0 && !m.vw[y][x]) go(c - 1);
+      if (y < m.h - 1 && !m.hw[y + 1][x]) go(c + w);
+      if (y > 0 && !m.hw[y][x]) go(c - w);
+    }
+    if (prev[g] < 0) return [];
+    const path = [];
+    for (let c = g; c !== s; c = prev[c]) path.push(c);
+    return path.reverse();
+  }
+
+  function steerMissile(state, p) {
+    if (p.age < C.MISSILE_SEEK) return;
+    if (p.target == null || p.age % 30 === 0) {
+      let best = Infinity;
+      p.target = null;
+      for (const t of state.tanks) {
+        const d = t.alive ? Math.hypot(t.x - p.x, t.y - p.y) : Infinity;
+        if (d < best) { best = d; p.target = t.id; }
+      }
+    }
+    const t = state.tanks.find(o => o.id === p.target && o.alive);
+    if (!t) { p.target = null; return; }
+    let gx = t.x, gy = t.y;
+    const clear = (x, y) => !castRay(state.walls, p.x, p.y, x - p.x, y - p.y, p.r);
+    if (!clear(t.x, t.y)) {
+      const path = pathCells(state, p.x, p.y, t.x, t.y), w = state.maze.w;
+      for (let i = Math.min(2, path.length - 1); i >= 0; i--) {
+        const cx = (path[i] % w + 0.5) * C.CELL, cy = (((path[i] / w) | 0) + 0.5) * C.CELL;
+        gx = cx; gy = cy;
+        if (clear(cx, cy)) break;
+      }
+    }
+    const cur = Math.atan2(p.vy, p.vx), d = wrap(Math.atan2(gy - p.y, gx - p.x) - cur), m = C.MISSILE_TURN * C.DT;
+    const a = cur + Math.max(-m, Math.min(m, d));
+    p.vx = Math.cos(a) * C.MISSILE_SPEED; p.vy = Math.sin(a) * C.MISSILE_SPEED;
+  }
+
+  // ---------- per-tick systems ----------
+  function shieldBounce(state, p, px, py) {
+    for (const t of state.tanks) {
+      if (!t.alive || !t.shield) continue;
+      const R = C.SHIELD_R + p.r;
+      if (Math.hypot(px - t.x, py - t.y) <= R || Math.hypot(p.x - t.x, p.y - t.y) > R) continue;
+      const nx = (p.x - t.x) / Math.hypot(p.x - t.x, p.y - t.y), ny = (p.y - t.y) / Math.hypot(p.x - t.x, p.y - t.y);
+      const dot = p.vx * nx + p.vy * ny;
+      p.vx -= 2 * dot * nx; p.vy -= 2 * dot * ny;
+      p.x = px; p.y = py;
+      p.bounces++;
+      if (p.path) p.path.push([p.x, p.y]);
+    }
+  }
+
+  function stepProjectiles(state) {
+    const n0 = state.projectiles.length;
+    for (let i = 0; i < n0; i++) {
+      const p = state.projectiles[i];
+      if (p.dead) continue;
+      p.age++;
+      if (p.type === 'missile') steerMissile(state, p);
+      const dist = Math.hypot(p.vx, p.vy) * C.DT, n = Math.max(1, Math.ceil(dist / C.STEP));
+      for (let k = 0; k < n && !p.dead; k++) {
+        const px = p.x, py = p.y;
+        travel(state, p, dist / n);
+        if (p.dead) break;
+        shieldBounce(state, p, px, py);
+        for (const t of state.tanks) {
+          if (!t.alive || !hitsTank(t, p.x, p.y, p.r)) continue;
+          if (p.type === 'frag') { explodeFrag(state, p); break; }
+          kill(state, t, p.owner);
+          if (p.type !== 'laser') { p.dead = true; break; }
+        }
+      }
+      if (p.path && !p.dead) p.head = [p.x, p.y];
+      if (!p.dead && p.age >= p.life) {
+        if (p.type === 'frag') explodeFrag(state, p); else p.dead = true;
+      }
+    }
+  }
+
+  function stepMines(state) {
+    for (const m of state.mines) {
+      if (++m.age < C.MINE_ARM) continue;
+      if (state.tanks.some(t => t.alive && hitsTank(t, m.x, m.y, C.MINE_R))) {
+        m.dead = true;
+        burst(state, m.x, m.y, m.owner, C.MINE_SHARDS, C.MINE_SHARD_SPEED, C.MINE_SHARD_LIFE);
+      }
+    }
+    state.mines = state.mines.filter(m => !m.dead);
+  }
+
+  function stepBeams(state) {
+    for (const b of state.beams) {
+      if (++b.age > C.RAY_KILL) continue;
+      const dx = b.x2 - b.x1, dy = b.y2 - b.y1, len = Math.hypot(dx, dy) || 1;
+      for (const t of state.tanks) {
+        if (!t.alive || t.shield) continue;
+        const u = Math.max(0, Math.min(len, ((t.x - b.x1) * dx + (t.y - b.y1) * dy) / len));
+        if (Math.hypot(b.x1 + dx / len * u - t.x, b.y1 + dy / len * u - t.y) > 26 + C.RAY_W) continue;
+        for (let s = 0; s <= len; s += 4)
+          if (hitsTank(t, b.x1 + dx / len * s, b.y1 + dy / len * s, C.RAY_W)) { kill(state, t, b.owner); break; }
+      }
+    }
+    state.beams = state.beams.filter(b => b.age < C.RAY_LIFE);
+  }
+
+  function stepCrates(state) {
+    const m = state.maze;
+    if (state.crates.length < C.CRATE_MAX && --state.crateTimer <= 0) {
+      state.crateTimer = rint(state.rng, C.CRATE_MIN_T, C.CRATE_MAX_T);
+      const free = [];
+      for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
+        if (isOff(m, x, y)) continue;
+        const cx = (x + 0.5) * C.CELL, cy = (y + 0.5) * C.CELL;
+        if (state.tanks.some(t => t.alive && Math.hypot(t.x - cx, t.y - cy) < 60)) continue;
+        if (state.crates.some(c => c.x === cx && c.y === cy)) continue;
+        free.push([cx, cy]);
+      }
+      if (free.length) {
+        const [x, y] = free[rint(state.rng, 0, free.length - 1)];
+        state.crates.push({ id: state.nextId++, type: POWERUPS[rint(state.rng, 0, POWERUPS.length - 1)], x, y });
+      }
+    }
+    for (const c of state.crates) for (const t of state.tanks) {
+      if (c.taken || !t.alive || !hitsTank(t, c.x, c.y, C.CRATE_R)) continue;
+      if (c.type === 'shield') { if (t.shield) continue; t.shield = C.SHIELD_TIME; }
+      else { if (t.weapon || t.charge) continue; t.weapon = { type: c.type, ammo: AMMO[c.type] || 1, spin: 0, bomb: null }; }
+      c.taken = true;
+    }
+    state.crates = state.crates.filter(c => !c.taken);
+  }
+
+  // ---------- rounds ----------
+  function newRound(seed, players) {
+    const s = { seed: seed | 0 }, n = players.length;
+    const w = rint(s, 4 + (n >> 1), 7 + n), h = rint(s, 3 + ((n / 3) | 0), 5 + (n >> 1));
+    const maze = makeMaze(w, h, s);
+    const cells = [...Array(w * h).keys()].filter(c => !maze.off[c]);
+    for (let i = cells.length - 1; i > 0; i--) { const j = rint(s, 0, i); [cells[i], cells[j]] = [cells[j], cells[i]]; }
+    const picks = [];
+    const far = c => picks.every(p => Math.abs(p % w - c % w) + Math.abs(((p / w) | 0) - ((c / w) | 0)) >= 2);
+    for (const c of cells) if (picks.length < n && far(c)) picks.push(c);
+    for (const c of cells) if (picks.length < n && !picks.includes(c)) picks.push(c);
+    const state = {
+      tick: 0, rng: s, maze, walls: buildWalls(maze), tanks: [], projectiles: [], mines: [], beams: [], crates: [],
+      kills: [], phase: 'play', endTimer: 0, winner: null, crateTimer: rint(s, C.CRATE_MIN_T, C.CRATE_MAX_T), nextId: 1
+    };
+    players.forEach((p, i) => state.tanks.push({
+      id: p.id, x: (picks[i] % w + 0.5) * C.CELL, y: (((picks[i] / w) | 0) + 0.5) * C.CELL,
+      a: rnd(s) * Math.PI * 2 - Math.PI, alive: true, weapon: null, charge: 0, shield: 0, fireHeld: true
+    }));
+    return state;
+  }
+
+  function step(state, inputs) {
+    state.tick++;
+    for (const t of state.tanks) {
+      if (!t.alive) continue;
+      const inp = inputs[t.id] || NOINPUT;
+      moveTank(state, t, inp);
+      fire(state, t, inp);
+      if (t.shield > 0) t.shield--;
+    }
+    stepProjectiles(state);
+    stepMines(state);
+    stepBeams(state);
+    stepCrates(state);
+    state.projectiles = state.projectiles.filter(p => !p.dead);
+    const alive = state.tanks.filter(t => t.alive);
+    if (state.phase === 'play' && alive.length <= 1) { state.phase = 'ending'; state.endTimer = C.END_DELAY; }
+    else if (state.phase === 'ending' && --state.endTimer <= 0) {
+      state.phase = 'over';
+      state.winner = alive.length === 1 ? alive[0].id : null;
+    }
+  }
+
+  // A series of rounds with per-player wins and kills. Players who join mid-round watch until the next one.
+  class Match {
+    constructor(seed) {
+      this.rng = { seed: seed | 0 };
+      this.players = [];
+      this.state = null;
+      this.round = 0;
+      this.version = 0;                         // bumps whenever the player list or stats change
+    }
+    player(id) { return this.players.find(p => p.id === id); }
+    addPlayer(id, look) {
+      this.players.push({ id, look: cleanLook(look), wins: 0, kills: 0, input: NOINPUT });
+      this.version++;
+      if (!this.state && this.players.length >= 2) this.startRound();
+    }
+    removePlayer(id) {
+      this.players = this.players.filter(p => p.id !== id);
+      if (this.state) this.state.tanks = this.state.tanks.filter(t => t.id !== id);
+      this.version++;
+    }
+    startRound() {
+      this.round++;
+      this.state = newRound(Math.floor(rnd(this.rng) * 2147483647), this.players);
+      this.version++;
+    }
+    inRound(id) { return !!this.state && this.state.tanks.some(t => t.id === id); }
+    step() {
+      const st = this.state;
+      if (!st) return;
+      const inputs = {};
+      for (const p of this.players) inputs[p.id] = p.input;
+      step(st, inputs);
+      for (const [by, victim] of st.kills) {
+        const p = by !== victim && this.player(by);
+        if (p) { p.kills++; this.version++; }
+      }
+      st.kills.length = 0;
+      if (st.phase === 'over') {
+        const w = st.winner != null && this.player(st.winner);
+        if (w) w.wins++;
+        this.state = null;
+        this.version++;
+        if (this.players.length >= 2) this.startRound();
+      }
+    }
+  }
+
+  function cleanLook(l) {
+    l = l || {};
+    const pick = (v, n, d) => (Number.isInteger(v) && v >= 0 && v < n ? v : d);
+    return {
+      body: pick(l.body, LOOK.colors, 0), turret: pick(l.turret, LOOK.colors, 0), tread: pick(l.tread, LOOK.colors, 11),
+      barrel: pick(l.barrel, LOOK.barrels, 0), acc: pick(l.acc, LOOK.accessories, 0)
+    };
+  }
+
+  const KEYS = ['up', 'down', 'left', 'right', 'fire'];
+  function encodeInput(i) { return KEYS.reduce((b, k, n) => b | (i[k] ? 1 << n : 0), 0); }
+  function decodeInput(b) { const i = {}; KEYS.forEach((k, n) => { i[k] = !!(b & (1 << n)); }); return i; }
+
+  return {
+    C, POWERUPS, COLORS, LOOK, KEYS, rnd, rint, wrap, isOff, makeMaze, buildWalls, tankPoly, rectPoly, sat, hitsTank, castRay,
+    travel, tracePath, placeTank, moveTank, fire, shoot, kill, pathCells, newRound, step, Match, cleanLook,
+    encodeInput, decodeInput
+  };
+});
+
+;
+/* Maze Tanks: flat 2D drawing shared by the local and online pages. */
+(function (root, factory) {
+  root.Render = factory(root.Game);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (G) {
+  'use strict';
+  const { C, COLORS } = G;
+  // Light grey checkered floor, white space around and inside the maze, mid-grey walls, near-black outlines.
+  const FLOOR = ['#e6e6e6', '#d9d9d9'], WALL = '#6b6b6b', INK = '#1f1f1f', OUTSIDE = '#ffffff', CRATE = '#bdbdbd';
+  const TAU = Math.PI * 2;
+
+  function shade(hex, f) {
+    const n = parseInt(hex.slice(1), 16);
+    const c = v => Math.round(v * (1 - f));
+    return `rgb(${c((n >> 16) & 255)},${c((n >> 8) & 255)},${c(n & 255)})`;
+  }
+  const col = i => COLORS[i] || COLORS[0];
+
+  function part(ctx, fill, path) {
+    ctx.beginPath();
+    path();
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.stroke();
+  }
+  const box = (ctx, x, y, w, h) => () => ctx.rect(x, y, w, h);
+  const disc = (ctx, x, y, r) => () => ctx.arc(x, y, r, 0, TAU);
+  const poly = (ctx, pts) => () => { ctx.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]); ctx.closePath(); };
+
+  // Layers in order: treads, body, turret, barrel, accessory. Tank faces +x in its own space.
+  // o.paint overrides part colours (the garage uses it to highlight one layer).
+  function drawTank(ctx, look, x, y, a, o = {}) {
+    const p = o.paint || {}, tread = p.tread || col(look.tread), body = p.body || col(look.body), tur = p.turret || col(look.turret);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(a);
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    part(ctx, tread, () => { ctx.rect(-20, -16, 40, 9); ctx.rect(-20, 7, 40, 9); });
+    part(ctx, body, () => ctx.roundRect ? ctx.roundRect(-16, -12, 32, 24, 3) : ctx.rect(-16, -12, 32, 24));
+    part(ctx, tur, disc(ctx, -1, 0, 10.5));
+    drawBarrel(ctx, look, tur, o);
+    if (!o.noAcc) drawAccessory(ctx, look.acc);
+    ctx.restore();
+  }
+
+  function drawBarrel(ctx, look, tur, o) {
+    const R = (x, y, w, h) => part(ctx, tur, box(ctx, x, y, w, h));
+    switch (o.weapon) {
+      case 'gatling':
+        for (let k = 0; k < 3; k++) R(4, Math.sin((o.spin || 0) * 0.6 + k * 2.094) * 4 - 1.2, 26, 2.4);
+        break;
+      case 'laser': part(ctx, tur, poly(ctx, [8, -3, 26, -7, 26, 7, 8, 3])); break;
+      case 'missile': part(ctx, tur, poly(ctx, [-6, -4, 20, -4, 28, 0, 20, 4, -6, 4])); break;
+      case 'deathray':
+        R(4, -4, 18, 8); R(21, -9, 5, 18);
+        if (o.charge) part(ctx, tur, disc(ctx, 31, 0, 2 + 8 * (1 - o.charge / C.RAY_CHARGE)));
+        break;
+      case 'frag': R(8, -5, 18, 10); part(ctx, tur, disc(ctx, 26, 0, 5.5)); break;
+      case 'double': R(8, -7, 22, 5); R(8, 2, 22, 5); break;
+      case 'shotgun': part(ctx, tur, poly(ctx, [4, -3, 28, -6, 28, 6, 4, 3])); break;
+      case 'mine': part(ctx, tur, disc(ctx, 11, 0, 5)); part(ctx, INK, disc(ctx, 11, 0, 1.5)); break;
+      default:
+        switch (look.barrel) {
+          case 1: R(8, -2.5, 25, 5); break;
+          case 2: R(8, -5, 20, 10); break;
+          case 3: R(8, -3.5, 17, 7); R(24, -6, 6, 12); break;
+          default: R(8, -3.5, 22, 7);
+        }
+    }
+  }
+
+  function drawAccessory(ctx, acc) {
+    switch (acc) {
+      case 1: // hat
+        part(ctx, '#333333', disc(ctx, -1, 0, 9.5));
+        part(ctx, '#c0392b', disc(ctx, -1, 0, 6.2));
+        part(ctx, '#333333', disc(ctx, -1, 0, 4.6));
+        break;
+      case 2: // antenna
+        ctx.beginPath(); ctx.moveTo(-13, -9); ctx.lineTo(-34, -14); ctx.strokeStyle = INK; ctx.lineWidth = 1.3; ctx.stroke();
+        ctx.lineWidth = 1.5;
+        part(ctx, '#e2493b', disc(ctx, -34, -14, 2.2));
+        break;
+      case 3: // flag
+        part(ctx, '#ffffff', poly(ctx, [-13, 8, -31, 11, -13, 15]));
+        part(ctx, INK, disc(ctx, -13, 8, 1.6));
+        break;
+      case 4: { // crown
+        const pts = [];
+        for (let i = 0; i < 10; i++) { const r = i % 2 ? 3.6 : 7.5, a = i * Math.PI / 5; pts.push(-1 + Math.cos(a) * r, Math.sin(a) * r); }
+        part(ctx, '#f2c230', poly(ctx, pts));
+        break;
+      }
+    }
+  }
+
+  // Flat crate icons, drawn in a 24-unit box centred on (0,0).
+  function drawIcon(ctx, type) {
+    ctx.fillStyle = INK; ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    const line = (...p) => { ctx.beginPath(); ctx.moveTo(p[0], p[1]); for (let i = 2; i < p.length; i += 2) ctx.lineTo(p[i], p[i + 1]); ctx.stroke(); };
+    const fill = f => { ctx.beginPath(); f(); ctx.fill(); };
+    switch (type) {
+      case 'gatling': for (const y of [-4, 0, 4]) line(-3, y, 8, y); fill(() => ctx.arc(-5, 0, 4, 0, TAU)); break;
+      case 'laser': line(-8, 6, -1, -6, 7, 6); fill(() => ctx.arc(7, 6, 2, 0, TAU)); break;
+      case 'missile': fill(() => { ctx.moveTo(9, 0); ctx.lineTo(3, -3.5); ctx.lineTo(-6, -3.5); ctx.lineTo(-9, -7); ctx.lineTo(-9, 7); ctx.lineTo(-6, 3.5); ctx.lineTo(3, 3.5); ctx.closePath(); }); break;
+      case 'deathray': fill(() => { ctx.moveTo(2, -10); ctx.lineTo(-6, 1); ctx.lineTo(0, 1); ctx.lineTo(-2, 10); ctx.lineTo(6, -2); ctx.lineTo(0, -2); ctx.closePath(); }); break;
+      case 'frag':
+        fill(() => ctx.arc(0, 0, 4.5, 0, TAU));
+        for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; line(Math.cos(a) * 6.5, Math.sin(a) * 6.5, Math.cos(a) * 9, Math.sin(a) * 9); }
+        break;
+      case 'double': fill(() => { ctx.rect(-8, -6, 16, 4); ctx.rect(-8, 2, 16, 4); }); break;
+      case 'shotgun': line(-8, 0, 8, -7); line(-8, 0, 8, 0); line(-8, 0, 8, 7); break;
+      case 'mine':
+        fill(() => ctx.arc(0, 0, 6, 0, TAU));
+        for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2 + Math.PI / 4; fill(() => ctx.arc(Math.cos(a) * 8, Math.sin(a) * 8, 1.8, 0, TAU)); }
+        break;
+      case 'shield': fill(() => { ctx.moveTo(0, -9); ctx.lineTo(8, -6); ctx.lineTo(7, 2); ctx.lineTo(0, 9); ctx.lineTo(-7, 2); ctx.lineTo(-8, -6); ctx.closePath(); }); break;
+    }
+  }
+
+  function drawCrate(ctx, c) {
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate(Math.PI / 4);
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(-13, -13, 26, 26, 3) : ctx.rect(-13, -13, 26, 26);
+    ctx.fillStyle = CRATE; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = WALL; ctx.stroke();
+    ctx.rotate(-Math.PI / 4);
+    ctx.scale(0.85, 0.85);
+    drawIcon(ctx, c.type);
+    ctx.restore();
+  }
+
+  // Pieces of a destroyed tank flying apart.
+  function debrisFor(t) {
+    const L = t.look, c = Math.cos(t.a), s = Math.sin(t.a), out = [];
+    const add = (lx, ly, shape, w, h, fill) => {
+      const d = Math.hypot(lx, ly) || 1, sp = 60 + Math.random() * 110, j = (Math.random() - 0.5) * 0.8;
+      const dx = (lx / d) * Math.cos(j) - (ly / d) * Math.sin(j), dy = (lx / d) * Math.sin(j) + (ly / d) * Math.cos(j);
+      out.push({ shape, w, h, fill, x: t.x + c * lx - s * ly, y: t.y + s * lx + c * ly, a: t.a,
+        vx: (c * dx - s * dy) * sp, vy: (s * dx + c * dy) * sp, va: (Math.random() - 0.5) * 12, life: 1.4 + Math.random() * 0.4 });
+    };
+    add(-2, -11.5, 'rect', 40, 9, col(L.tread)); add(2, 11.5, 'rect', 40, 9, col(L.tread));
+    for (const [x, y] of [[-8.5, -6], [8.5, -6], [-8.5, 6], [8.5, 6]]) add(x, y, 'rect', 17, 12, col(L.body));
+    add(-1, 0.5, 'disc', 10.5, 10.5, col(L.turret));
+    add(19, 0, 'rect', 22, 7, col(L.turret));
+    return out;
+  }
+
+  class Scene {
+    constructor(canvas) {
+      this.cv = canvas;
+      this.ctx = canvas.getContext('2d');
+      this.debris = [];
+      this.alive = new Map();
+      this.round = null;
+      this.last = 0;
+    }
+
+    draw(v, now) {
+      const cv = this.cv, ctx = this.ctx, d = window.devicePixelRatio || 1, r = cv.getBoundingClientRect();
+      const W0 = Math.max(1, Math.round(r.width * d)), H0 = Math.max(1, Math.round(r.height * d));
+      if (cv.width !== W0 || cv.height !== H0) { cv.width = W0; cv.height = H0; }
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = OUTSIDE;
+      ctx.fillRect(0, 0, W0, H0);
+      const dt = Math.min(0.05, Math.max(0, (now - this.last) / 1000));
+      this.last = now;
+      if (!v) return;
+
+      if (v.round !== this.round) { this.round = v.round; this.debris = []; this.alive.clear(); }
+      for (const t of v.tanks) {
+        if (this.alive.get(t.id) === true && !t.alive && t.look) this.debris.push(...debrisFor(t));
+        this.alive.set(t.id, t.alive);
+      }
+      for (const p of this.debris) {
+        const f = Math.pow(0.12, dt);
+        p.x += p.vx * dt; p.y += p.vy * dt; p.a += p.va * dt;
+        p.vx *= f; p.vy *= f; p.va *= f; p.life -= dt;
+      }
+      this.debris = this.debris.filter(p => p.life > 0);
+
+      const m = v.maze, W = m.w * C.CELL, H = m.h * C.CELL, pad = 12;
+      const k = Math.min(W0 / (W + 2 * pad), H0 / (H + 2 * pad));
+      ctx.setTransform(k, 0, 0, k, (W0 - W * k) / 2, (H0 - H * k) / 2);
+      for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
+        if (G.isOff(m, x, y)) continue;
+        ctx.fillStyle = FLOOR[(x + y) % 2];
+        ctx.fillRect(x * C.CELL, y * C.CELL, C.CELL, C.CELL);
+      }
+
+      const looks = v.looks || {}, lookOf = id => looks[id] || { body: 11, turret: 11, tread: 11, barrel: 0, acc: 0 };
+      // mines (fade out once armed)
+      for (const m of v.mines) {
+        ctx.globalAlpha = m.age < C.MINE_ARM ? 1 : 0.18;
+        ctx.lineWidth = 2;
+        part(ctx, col(lookOf(m.owner).body), disc(ctx, m.x, m.y, 8));
+        part(ctx, INK, disc(ctx, m.x, m.y, 2.5));
+      }
+      ctx.globalAlpha = 1;
+      for (const c of v.crates) drawCrate(ctx, c);
+
+      // laser aiming lines
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.setLineDash([0.1, 7]);
+      for (const t of v.tanks) {
+        if (!t.alive || t.weapon !== 'laser') continue;
+        const path = G.tracePath(v, t.x, t.y, t.a, C.AIM_LEN);
+        ctx.strokeStyle = col(t.look.turret);
+        ctx.beginPath(); path.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
+      }
+      ctx.setLineDash([]);
+
+      // death rays
+      for (const b of v.beams) {
+        ctx.globalAlpha = Math.max(0, 1 - b.age / C.RAY_LIFE);
+        ctx.lineCap = 'butt';
+        ctx.strokeStyle = shade(col(lookOf(b.owner).turret), 0.45); ctx.lineWidth = C.RAY_W * 2 + 3;
+        ctx.beginPath(); ctx.moveTo(b.x1, b.y1); ctx.lineTo(b.x2, b.y2); ctx.stroke();
+        ctx.strokeStyle = col(lookOf(b.owner).turret); ctx.lineWidth = C.RAY_W * 2;
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+
+      // debris under the walls, then walls, then tanks
+      ctx.lineWidth = 2;
+      for (const p of this.debris) {
+        ctx.save();
+        ctx.translate(p.x, p.y); ctx.rotate(p.a);
+        const s = Math.min(1, p.life / 0.35); ctx.scale(s, s);
+        part(ctx, p.fill, p.shape === 'disc' ? disc(ctx, 0, 0, p.w) : box(ctx, -p.w / 2, -p.h / 2, p.w, p.h));
+        ctx.restore();
+      }
+      ctx.fillStyle = WALL;
+      for (const w of v.walls) ctx.fillRect(w.x1, w.y1, w.x2 - w.x1, w.y2 - w.y1);
+      for (const t of v.tanks) if (t.alive) drawTank(ctx, t.look, t.x, t.y, t.a, t);
+
+      // projectiles
+      for (const p of v.projectiles) {
+        if (p.type === 'laser') {
+          ctx.strokeStyle = col(lookOf(p.owner).turret); ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+          ctx.beginPath();
+          p.path.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+          ctx.lineTo(p.x, p.y); ctx.stroke();
+        } else if (p.type === 'missile') {
+          ctx.save();
+          ctx.translate(p.x, p.y); ctx.rotate(Math.atan2(p.vy, p.vx));
+          ctx.lineWidth = 1.5;
+          const fin = p.target != null ? col(lookOf(p.target).body) : '#9a9a9a';
+          part(ctx, fin, poly(ctx, [-8, -6, -3, 0, -8, 6]));
+          part(ctx, col(lookOf(p.owner).turret), poly(ctx, [-8, -3, 4, -3, 9, 0, 4, 3, -8, 3]));
+          ctx.restore();
+        } else {
+          ctx.fillStyle = INK;
+          ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(2.5, p.r), 0, TAU); ctx.fill();
+        }
+      }
+
+      // shields
+      ctx.lineWidth = 2; ctx.strokeStyle = INK; ctx.setLineDash([7, 5]);
+      for (const t of v.tanks) {
+        if (!t.alive || !t.shield) continue;
+        ctx.lineDashOffset = -(v.tick || 0) * 0.6;
+        ctx.globalAlpha = t.shield < 60 && (v.tick >> 3) % 2 ? 0.3 : 1;
+        ctx.beginPath(); ctx.arc(t.x, t.y, C.SHIELD_R, 0, TAU); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      ctx.setLineDash([]);
+    }
+  }
+
+  // A tank facing up, centred in a square canvas of css size px.
+  function tankIcon(cv, look, px, o = {}) {
+    const d = window.devicePixelRatio || 1, ctx = cv.getContext('2d');
+    cv.width = cv.height = Math.round(px * d);
+    cv.style.width = cv.style.height = px + 'px';
+    const k = (px * d) / (o.span || 80);
+    ctx.setTransform(k, 0, 0, k, cv.width / 2, cv.height / 2);
+    drawTank(ctx, look, 0, 4, -Math.PI / 2, o);
+  }
+
+  return { drawTank, drawIcon, drawCrate, tankIcon, Scene, shade, INK, WALL };
+});
+
+;
+/* Maze Tanks: icon-only screens shared by the local and online pages (stats bar, garage, buttons). */
+(function (root, factory) {
+  root.UI = factory(root.Game, root.Render);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (G, R) {
+  'use strict';
+  const S = body => `<svg viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
+  const ICON = {
+    play: S('<path d="M8 5v14l11-7z" fill="currentColor"/>'),
+    check: S('<path d="M4 12.5l5 5L20 6.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>'),
+    close: S('<path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>'),
+    trophy: S('<path d="M7 3h10v3h3v2.5A4.5 4.5 0 0 1 15.9 13 5 5 0 0 1 13 15.8V18h3.5v3h-9v-3H11v-2.2A5 5 0 0 1 8.1 13 4.5 4.5 0 0 1 4 8.5V6h3zm0 5H6v.5a2.5 2.5 0 0 0 1.2 2.1A6 6 0 0 1 7 9.5zm10 0v1.5c0 .4 0 .8-.2 1.1A2.5 2.5 0 0 0 18 8.5V8z" fill="currentColor"/>'),
+    kill: S('<circle cx="12" cy="12" r="6.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/>'),
+    keys: S('<rect x="2" y="6" width="20" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>'),
+    paint: S('<path d="M12 3a9 9 0 0 0 0 18c1.2 0 1.7-.8 1.7-1.6 0-1-.8-1.3-.8-2.1 0-.9.7-1.5 1.6-1.5H16a5 5 0 0 0 5-5c0-4.3-4-7.8-9-7.8z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="7.5" cy="11.5" r="1.6" fill="currentColor"/><circle cx="10" cy="7.5" r="1.6" fill="currentColor"/><circle cx="15" cy="7.5" r="1.6" fill="currentColor"/>'),
+    eye: S('<path d="M12 5C6.5 5 2.5 12 2.5 12S6.5 19 12 19s9.5-7 9.5-7S17.5 5 12 5zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8z" fill="currentColor"/>'),
+    up: S('<path d="M12 3l-7 8h4.5v10h5V11H19z" fill="currentColor"/>'),
+    down: S('<path d="M12 21l7-8h-4.5V3h-5v10H5z" fill="currentColor"/>'),
+    left: S('<path d="M12 4V1L7 5.5 12 10V7a6 6 0 1 1-6 6H3.5A8.5 8.5 0 1 0 12 4z" fill="currentColor"/>'),
+    right: S('<path d="M12 4V1l5 4.5L12 10V7a6 6 0 1 0 6 6h2.5A8.5 8.5 0 1 1 12 4z" fill="currentColor"/>'),
+    fire: S('<circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l2.8 2.8M16.2 16.2 19 19M5 19l2.8-2.8M16.2 7.8 19 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>')
+  };
+
+  function el(tag, cls, html) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (html != null) e.innerHTML = html;
+    return e;
+  }
+  function button(icon, label, cls = '') {
+    const b = el('button', 'btn ' + cls, ICON[icon] || '');
+    b.type = 'button';
+    b.setAttribute('aria-label', label);
+    return b;
+  }
+
+  // Bottom bar: each player's tank, wins and kills. players: [{id, look, wins, kills, out}]
+  function statsBar(host) {
+    let sig = '';
+    return {
+      update(players, me) {
+        const s = JSON.stringify([players.map(p => [p.id, p.look, p.wins, p.kills, !!p.out]), me]);
+        if (s === sig) return;
+        sig = s;
+        host.textContent = '';
+        for (const p of players) {
+          const d = el('div', 'pl' + (p.out ? ' out' : '') + (p.id === me ? ' me' : ''));
+          const cv = el('canvas', 'ic');
+          R.tankIcon(cv, p.look, 34, { span: 58 });
+          d.append(cv);
+          d.insertAdjacentHTML('beforeend',
+            `<span class="st" aria-label="wins">${ICON.trophy}<b>${p.wins | 0}</b></span><span class="st" aria-label="kills">${ICON.kill}<b>${p.kills | 0}</b></span>`);
+          host.append(d);
+        }
+      }
+    };
+  }
+
+  // Garage: pick tread/body/turret colours, barrel and accessory; live layered preview.
+  function garage(host, look, onDone) {
+    look = G.cleanLook(look);
+    const panel = el('div', 'panel garage');
+    const preview = el('canvas', 'preview');
+    const opts = el('div', 'opts');
+    const ok = button('check', 'done', 'dark');
+    panel.append(preview, opts, ok);
+    host.append(panel);
+    const redraws = [];
+    const redraw = () => { R.tankIcon(preview, look, 168, { span: 76 }); redraws.forEach(f => f()); };
+
+    const HI = '#2b2b2b', LO = '#d6d6d6';
+    for (const part of ['tread', 'body', 'turret']) {
+      const row = el('div', 'row');
+      const ic = el('canvas', 'part');
+      R.tankIcon(ic, look, 46, { span: 60, paint: { tread: LO, body: LO, turret: LO, [part]: HI }, noAcc: true });
+      row.append(ic);
+      G.COLORS.forEach((c, i) => {
+        const b = el('button', 'swatch');
+        b.type = 'button';
+        b.style.background = c;
+        b.setAttribute('aria-label', part + ' colour ' + (i + 1));
+        b.onclick = () => { look[part] = i; redraw(); };
+        redraws.push(() => b.classList.toggle('on', look[part] === i));
+        row.append(b);
+      });
+      opts.append(row);
+    }
+    const choiceRow = (key, n, draw) => {
+      const row = el('div', 'row');
+      for (let i = 0; i < n; i++) {
+        const b = el('button', 'choice');
+        b.type = 'button';
+        b.setAttribute('aria-label', key + ' ' + (i + 1));
+        const cv = el('canvas');
+        b.append(cv);
+        b.onclick = () => { look[key] = i; redraw(); };
+        redraws.push(() => { b.classList.toggle('on', look[key] === i); draw(cv, i); });
+        row.append(b);
+      }
+      opts.append(row);
+    };
+    choiceRow('barrel', G.LOOK.barrels, (cv, i) => R.tankIcon(cv, { ...look, barrel: i, acc: 0 }, 40, { span: 64 }));
+    choiceRow('acc', G.LOOK.accessories, (cv, i) => R.tankIcon(cv, { ...look, acc: i }, 40, { span: 76 }));
+    redraw();
+    ok.onclick = () => { panel.remove(); onDone(look); };
+    ok.focus();
+  }
+
+  return { ICON, el, button, statsBar, garage };
+});
+
+;
+/* Maze Tanks local: two players on one keyboard. */
+(function () {
+  'use strict';
+  const G = Game, U = UI, $ = s => document.querySelector(s);
+  const STORE = 'mazeTanks.local';
+  const DEFAULT_KEYS = [['KeyE', 'KeyD', 'KeyS', 'KeyF', 'KeyQ'], ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyM']];
+  const DEFAULT_LOOKS = [{ body: 0, turret: 0, tread: 11, barrel: 0, acc: 0 }, { body: 4, turret: 4, tread: 11, barrel: 0, acc: 0 }];
+  const ARROWS = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Space: '␣' };
+  const keyLabel = code => ARROWS[code] || code.replace(/^(Key|Digit|Numpad)/, '');
+
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) { /* storage unavailable */ }
+  const looks = [0, 1].map(i => G.cleanLook((saved.looks || DEFAULT_LOOKS)[i]));
+  const keys = [0, 1].map(i => (Array.isArray(saved.keys?.[i]) && saved.keys[i].length === 5 ? saved.keys[i] : DEFAULT_KEYS[i]).slice());
+  const save = () => { try { localStorage.setItem(STORE, JSON.stringify({ looks, keys })); } catch (e) { /* ignore */ } };
+
+  const scene = new Render.Scene($('#game')), bar = U.statsBar($('#bar')), overlay = $('#overlay');
+  const held = new Set(), tapped = new Set(); // tapped: pressed since the last update, so short taps still count
+  let match = null, playing = false, acc = 0, lastT = performance.now(), prev = new Map(), remap = null;
+
+  function menu() {
+    playing = false;
+    overlay.hidden = false;
+    overlay.textContent = '';
+    const wrap = U.el('div', 'row');
+    wrap.style.gap = '28px';
+    const card = i => {
+      const c = U.el('div', 'card');
+      const cv = U.el('canvas');
+      Render.tankIcon(cv, looks[i], 128);
+      const paint = U.button('paint', 'customise tank ' + (i + 1), 'small');
+      const kb = U.button('keys', 'keys for player ' + (i + 1), 'small');
+      cv.onclick = paint.onclick = () => openGarage(i);
+      kb.onclick = () => openKeys(i);
+      const r = U.el('div', 'row'); r.append(paint, kb);
+      c.append(cv, r);
+      return c;
+    };
+    const play = U.button('play', 'play', 'big dark');
+    play.id = 'play';
+    play.onclick = start;
+    wrap.append(card(0), play, card(1));
+    overlay.append(wrap);
+    play.focus();
+  }
+
+  function openGarage(i) {
+    overlay.textContent = '';
+    U.garage(overlay, looks[i], look => {
+      looks[i] = look;
+      save();
+      if (match) match.player(i + 1).look = look;
+      menu();
+    });
+  }
+
+  function openKeys(i) {
+    overlay.textContent = '';
+    const panel = U.el('div', 'panel keys col');
+    const rows = U.el('div', 'col');
+    G.KEYS.forEach((name, k) => {
+      const r = U.el('div', 'row', U.ICON[name]);
+      const b = U.el('button', 'key');
+      b.type = 'button';
+      b.setAttribute('aria-label', name);
+      b.textContent = keyLabel(keys[i][k]);
+      b.onclick = () => {
+        rows.querySelectorAll('.key').forEach(x => x.classList.remove('wait'));
+        b.classList.add('wait');
+        b.textContent = '…';
+        remap = {
+          i, set(code) {
+            // a key already used elsewhere swaps places with the old binding
+            for (const ks of keys) { const j = ks.indexOf(code); if (j >= 0) ks[j] = keys[i][k]; }
+            keys[i][k] = code;
+            save();
+            openKeys(i);
+          }
+        };
+      };
+      r.append(b);
+      rows.append(r);
+    });
+    const ok = U.button('check', 'done', 'dark');
+    ok.onclick = () => { remap = null; menu(); };
+    panel.append(rows, ok);
+    overlay.append(panel);
+  }
+
+  function start() {
+    if (!match) {
+      match = new G.Match((Math.random() * 2147483647) | 0);
+      match.addPlayer(1, looks[0]);
+      match.addPlayer(2, looks[1]);
+    }
+    held.clear();
+    tapped.clear();
+    acc = 0;
+    playing = true;
+    overlay.hidden = true;
+    overlay.textContent = '';
+  }
+
+  function tick() {
+    const st = match.state;
+    prev = new Map();
+    for (const t of st.tanks) prev.set('t' + t.id, { x: t.x, y: t.y, a: t.a });
+    for (const p of st.projectiles) prev.set('p' + p.id, { x: p.x, y: p.y });
+    match.players.forEach((p, i) => {
+      const k = keys[i];
+      const on = c => held.has(c) || tapped.has(c);
+      p.input = { up: on(k[0]), down: on(k[1]), left: on(k[2]), right: on(k[3]), fire: on(k[4]) };
+    });
+    tapped.clear();
+    const round = match.round;
+    match.step();
+    if (match.round !== round) prev.clear();
+  }
+
+  function view(alpha) {
+    const st = match && match.state;
+    if (!st) return null;
+    const lerp = (key, o) => {
+      const p = prev.get(key);
+      if (!p) return {};
+      const v = { x: p.x + (o.x - p.x) * alpha, y: p.y + (o.y - p.y) * alpha };
+      if (o.a !== undefined) v.a = p.a + G.wrap(o.a - p.a) * alpha;
+      return v;
+    };
+    const lookMap = {};
+    for (const p of match.players) lookMap[p.id] = p.look;
+    return {
+      round: match.round, tick: st.tick, maze: st.maze, walls: st.walls, mines: st.mines, crates: st.crates, beams: st.beams, looks: lookMap,
+      tanks: st.tanks.map(t => ({
+        ...t, ...lerp('t' + t.id, t), look: lookMap[t.id],
+        weapon: t.weapon && t.weapon.type, spin: t.weapon ? t.weapon.spin : 0
+      })),
+      projectiles: st.projectiles.map(p => ({ ...p, ...lerp('p' + p.id, p) }))
+    };
+  }
+
+  function frame(t) {
+    const dt = Math.min(0.25, (t - lastT) / 1000);
+    lastT = t;
+    if (playing && match.state) {
+      acc += dt;
+      for (let n = 0; acc >= G.C.DT && n < 8; n++) { tick(); acc -= G.C.DT; }
+      acc = Math.min(acc, G.C.DT);
+    }
+    scene.draw(view(playing ? acc / G.C.DT : 1), t);
+    bar.update(match ? match.players : looks.map((look, i) => ({ id: i + 1, look, wins: 0, kills: 0 })));
+    requestAnimationFrame(frame);
+  }
+
+  addEventListener('keydown', e => {
+    if (remap) { e.preventDefault(); const r = remap; remap = null; if (e.code !== 'Escape') r.set(e.code); else openKeys(r.i); return; }
+    if (!playing) return;
+    if (e.code === 'Escape') { menu(); return; }
+    if (keys.some(k => k.includes(e.code))) e.preventDefault();
+    held.add(e.code);
+    tapped.add(e.code);
+  });
+  addEventListener('keyup', e => held.delete(e.code));
+  addEventListener('blur', () => held.clear());
+
+  window.mazeTanks = { get match() { return match; }, get playing() { return playing; } }; // for tests
+  menu();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

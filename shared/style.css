@@ -1,0 +1,47 @@
+/* Flat look: light grey checkered floor, mid-grey walls, white surround. No gradients, shadows or glow. */
+:root { --bg: #ffffff; --ink: #1f1f1f; --wall: #6b6b6b; --paper: #ffffff; --soft: #eeeeee; --line: #d0d0d0; --focus: #3d8fe0; color-scheme: light; }
+html, body { height: 100%; margin: 0; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--ink); font: 700 16px/1 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; user-select: none; -webkit-user-select: none; }
+#app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+#game { flex: 1; width: 100%; min-height: 0; display: block; }
+#bar { flex: none; height: 52px; display: flex; gap: 26px; align-items: center; justify-content: center; background: var(--paper); border-top: 2px solid var(--wall); padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px)); overflow-x: auto; }
+.pl { display: flex; align-items: center; gap: 8px; padding-bottom: 3px; border-bottom: 3px solid transparent; }
+.pl.me { border-bottom-color: var(--ink); }
+.pl.out { opacity: .4; }
+.st { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; min-width: 34px; }
+.st svg { width: 18px; height: 18px; color: var(--wall); }
+#overlay { position: fixed; inset: 0 0 52px 0; display: grid; place-items: center; background: rgba(255, 255, 255, .88); padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px)); overflow: auto; }
+#overlay.clear { background: transparent; pointer-events: none; }
+#overlay.clear > * { pointer-events: auto; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center; }
+.col { display: flex; flex-direction: column; gap: 14px; align-items: center; }
+.btn { appearance: none; border: 2px solid var(--wall); background: var(--paper); color: var(--ink); border-radius: 12px; width: 56px; height: 56px; padding: 0; display: grid; place-items: center; cursor: pointer; }
+.btn svg { width: 28px; height: 28px; }
+.btn:hover { background: var(--soft); }
+.btn.dark { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.btn.big { width: 96px; height: 96px; border-radius: 50%; }
+.btn.big svg { width: 48px; height: 48px; }
+.btn.small { width: 40px; height: 40px; border-radius: 10px; }
+.btn.small svg { width: 20px; height: 20px; }
+button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.card { background: var(--paper); border: 2px solid var(--wall); border-radius: 16px; padding: 18px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.card canvas { cursor: pointer; }
+.panel { background: var(--paper); border: 2px solid var(--wall); border-radius: 16px; padding: 18px; display: flex; flex-wrap: wrap; gap: 18px; align-items: center; justify-content: center; max-width: 760px; }
+.garage .opts { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.garage .row { justify-content: flex-start; gap: 7px; }
+.garage .part { margin-right: 6px; }
+.swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(0, 0, 0, .25); padding: 0; cursor: pointer; }
+.swatch.on { outline: 3px solid var(--ink); outline-offset: 2px; }
+.choice { border: 2px solid var(--line); background: var(--paper); border-radius: 10px; padding: 3px; cursor: pointer; line-height: 0; }
+.choice.on { border-color: var(--ink); }
+.keys .row { justify-content: flex-start; }
+.keys .row svg { width: 26px; height: 26px; }
+.key { min-width: 64px; height: 40px; border: 2px solid var(--wall); background: var(--paper); border-radius: 8px; font: inherit; color: var(--ink); cursor: pointer; }
+.key.wait { background: var(--ink); color: var(--paper); }
+.spin { width: 52px; height: 52px; border: 6px solid var(--line); border-top-color: var(--ink); border-radius: 50%; animation: spin .9s linear infinite; }
+.corner { position: fixed; top: max(12px, env(safe-area-inset-top, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); display: flex; gap: 8px; align-items: center; }
+.corner svg { width: 26px; height: 26px; }
+.spin.small { width: 22px; height: 22px; border-width: 4px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }

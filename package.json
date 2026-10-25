@@ -1,0 +1,19 @@
+{
+  "name": "maze-tanks",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Top-down maze tank battles: local two-player page and online server.",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "build": "node scripts/build-local.js",
+    "test": "node --test test/game.test.js test/server.test.js",
+    "e2e": "node scripts/build-local.js && node test/local.e2e.js && node test/online.e2e.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
+  }
+}
